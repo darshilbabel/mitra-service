@@ -1,0 +1,139 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+
+<table style="width:100%; border-collapse: collapse;">
+    <thead>
+        <tr>
+            <th style="text-align:left; padding:8px;">Object</th>
+            <th style="text-align:left; padding:8px;">Date</th>
+            <th style="text-align:left; padding:8px;">User</th>
+            <th style="text-align:left; padding:8px;">Change type</th>
+            <th style="text-align:left; padding:8px;">Changes</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for h in history_list %}
+        <tr style="border-top:1px solid #ddd;">
+
+            <td style="padding:8px;">
+                {% if h.step %}
+                    <a href="{% url 'admin:chatbot_historicalcompanystatemachine_change' h.history_id %}">
+                        StateMachine Step {{ h.step }}
+                    </a>
+                {% else %}
+                    <a href="{% url 'admin:chatbot_historicalcompanybot_change' h.history_id %}">
+                        {{ object }}
+                    </a>
+                {% endif %}
+            </td>
+
+            <td style="padding:8px;">
+                {{ h.history_date }}
+            </td>
+
+            <td style="padding:8px;">
+                {{ h.history_user|default:"None" }}
+            </td>
+
+            <td style="padding:8px;">
+                {{ h.get_history_type_display }}
+            </td>
+
+            <td style="padding:8px;">
+                {% if h.diff_html %}
+                    <button onclick="showDiff('{{ forloop.counter }}')"
+                        style="padding:4px 10px; cursor:pointer;">
+                        View diff
+                    </button>
+
+                    <div id="diff{{ forloop.counter }}" style="display:none;">
+                        {% for d in h.diff_html %}
+                            <div style="margin-bottom:20px;">
+                                {{ d|safe }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    -
+                {% endif %}
+            </td>
+
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+
+<script>
+
+function showDiff(id) {
+
+    const content = document.getElementById("diff" + id).innerHTML;
+
+    const popup = window.open(
+        "",
+        "diff",
+        "width=1000,height=700,scrollbars=yes"
+    );
+
+    popup.document.write(`
+        <html>
+        <head>
+            <title>Change Diff</title>
+
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    padding: 20px;
+                    background: #fff;
+                }
+
+                table.diff {
+                    width:100%;
+                    border-collapse: collapse;
+                    font-size: 13px;
+                }
+
+                .diff_header {
+                    background: #f7f7f7;
+                    padding: 4px;
+                }
+
+                .diff_add {
+                    background: #d4ffd4;
+                }
+
+                .diff_sub {
+                    background: #ffd4d4;
+                }
+
+                .diff_chg {
+                    background: #fff4c2;
+                }
+
+                td {
+                    padding: 4px;
+                }
+
+            </style>
+
+        </head>
+
+        <body>
+
+            <h2>Field Changes</h2>
+
+            ${content}
+
+        </body>
+        </html>
+    `);
+
+}
+
+</script>
+
+{% endblock %}

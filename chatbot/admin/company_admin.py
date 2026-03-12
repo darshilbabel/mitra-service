@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from import_export.admin import ExportActionMixin, ImportExportModelAdmin
 from django.contrib import admin
 from django.db.models import Q
@@ -18,6 +19,11 @@ from django.urls import path
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
+from django.shortcuts import render
+from itertools import chain
+from django.template.response import TemplateResponse
+from operator import attrgetter
+from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot
 
 class CompanyStateMachineAdmin(admin.TabularInline):
     model = CompanyStateMachine
@@ -184,6 +190,68 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
             # This example assumes not.
             self.inlines = [VoiceProviderAdmin]
         return super().changeform_view(request, object_id, form_url, extra_context)
+
+    def history_view(self, request, object_id, extra_context=None):
+        obj = self.get_object(request, object_id)
+
+        bot_history = list(obj.history.all())
+        sm_history = list(CompanyStateMachine.history.filter(company_bot=obj))
+
+        history = list(chain(bot_history, sm_history))
+        history.sort(key=attrgetter("history_date"), reverse=True)
+
+        import difflib
+
+        for record in history:
+            try:
+                if hasattr(record, "instance"):
+                    prev = record.instance.history.filter(
+                        history_date__lt=record.history_date
+                    ).order_by("-history_date").first()
+
+                    if prev:
+                        delta = record.diff_against(prev)
+
+                        record.changes = []
+                        record.diff_html = []
+
+                        for change in delta.changes:
+                            old = str(change.old or "")
+                            new = str(change.new or "")
+
+                            diff = difflib.HtmlDiff().make_table(
+                                old.splitlines(),
+                                new.splitlines(),
+                                fromdesc="Old",
+                                todesc="New",
+                                context=True,
+                                numlines=2
+                            )
+
+                            record.changes.append(change.field)
+                            record.diff_html.append(diff)
+
+                    else:
+                        record.changes = []
+                        record.diff_html = []
+
+            except Exception:
+                record.changes = []
+                record.diff_html = []
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"History: {obj}",
+            "history_list": history,
+            "object": obj,
+            "opts": self.model._meta,
+        }
+
+        return TemplateResponse(
+            request,
+            "admin/combined_history.html",
+            context,
+        )
 
     def duplicate_bot(self, request, queryset):
         if queryset.count() != 1:
@@ -371,7 +439,10 @@ class ChatSessionAdmin(ExportActionMixin, admin.ModelAdmin):
 
 
 admin.site.register(Company, CompanyAdmin)
+from simple_history.admin import SimpleHistoryAdmin
 
+admin.site.register(HistoricalCompanyStateMachine, SimpleHistoryAdmin)
+admin.site.register(HistoricalCompanyBot, SimpleHistoryAdmin)
 
 @admin.register(ImageConfiguration)
 class ImageConfigurationAdmin(admin.ModelAdmin):
