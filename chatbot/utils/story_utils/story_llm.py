@@ -10,14 +10,14 @@ logger = logging.getLogger('django')
 
 
 async def generate_story_llm(formatted_content_prompt, formatted_story_prompt, messages, tool_content, tool_story, company_bot):
-    async def invoke_llm(prompt):
+    async def invoke_llm(prompt, tools):
         if company_bot.provider == LLMProvider.BEDROCK_CONVERSE:
             return await asyncio.to_thread(
                 functools.partial(
                     handle_bedrock_model,
                     system_prompt=prompt,
                     messages=messages,
-                    tools=tool_content,
+                    tools=tools,
                     temperature=company_bot.bot_temperature,
                     max_token=company_bot.max_token,
                     top_p=company_bot.filter_score,
@@ -41,12 +41,12 @@ async def generate_story_llm(formatted_content_prompt, formatted_story_prompt, m
     tasks = []
 
     if formatted_content_prompt:
-        tasks.append(invoke_llm(formatted_content_prompt))
+        tasks.append(invoke_llm(formatted_content_prompt, tool_content))
     else:
         logger.info("Skipping CONTENT LLM as formatted_content_prompt is None")
 
     if formatted_story_prompt:
-        tasks.append(invoke_llm(formatted_story_prompt))
+        tasks.append(invoke_llm(formatted_story_prompt, tool_story))
     else:
         logger.info("Skipping STORY LLM as formatted_story_prompt is None")
 

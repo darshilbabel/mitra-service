@@ -195,7 +195,7 @@ def create_story_object(profile_id, session, access_token, flow, language='en'):
         story_id = story.id if story and story.id else ""
         story_content = story.content if story and story.content else ""
 
-        return story_id, story_content, ""
+        return story_id, story_content, "", ""
 
     except Exception as e:
         traceback.print_exc()
@@ -212,7 +212,7 @@ def create_story_object(profile_id, session, access_token, flow, language='en'):
             error_message = translate_field(
                 voice_provider=voice_provider, message_body=error_message, target_language=language
             )
-        return "", "", error_message
+        return "", "", error_message, error_type
 
 
 def get_bot_error_message(bot_vernacular, error_type):
@@ -355,22 +355,24 @@ def generate_story(profile_id, session, access_token, flow, language='en'):
         story_id = story.id if story and story.id else ""
         story_content = story.content if story and story.content else ""
 
-        return story_id, story_content, ""
+        return story_id, story_content, "", ""
 
     except Exception as e:
         traceback.print_exc()
+        error_type = getattr(e, "code", "generic_error")
+
         if not company_bot:
             profile = Profile.objects.filter(id=profile_id).first()
             company_bot, validate_bot = get_story_company_bot_simple(flow=flow)
 
         bot_vernacular = BotVernacular.objects.filter(company_bot=company_bot, language=language).first()
-        error_message = bot_vernacular.error_message if bot_vernacular and bot_vernacular.error_message \
-            else "Please try again!"
+        error_message = get_bot_error_message(bot_vernacular, error_type)
+
         if voice_provider and language != 'en':
             error_message = translate_field(
                 voice_provider=voice_provider, message_body=error_message, target_language=language
             )
-        return "", "", error_message
+        return "", "", error_message, error_type
 
 
 def get_story_company_bot_simple(flow):

@@ -1,24 +1,24 @@
-from django.core.exceptions import ValidationError
-from import_export.admin import ExportActionMixin, ImportExportModelAdmin
 from django.contrib import admin
 from django.db.models import Q
+from pydantic import ValidationError
 from simple_history.admin import SimpleHistoryAdmin
 from .generic_upload_admin import BatchUploadMixin
 from chatbot.filter.admin_filter import (CompanyChatCompanyFilter, ChatSessionFilter, ProfileCityFilter,
                                          ProfileStateFilter, ProfileCompanyChatFilter, ProfileEmailFilter)
 from chatbot.filter.custom_date_from_filter import CustomAdvanceDateFilter
 from chatbot.models import Company, Profile, ProfileType, CompanyBot, CompanyChat, ChatSession, \
-    CompanyBotTypeChoices, Voice, VoiceProvider, ImageConfiguration, Flow
+    CompanyBotTypeChoices, Voice, ImageConfiguration, Flow
 from chatbot.models.company_models import CompanyStateMachine
 from chatbot.resources.resource import CompanyChatResource
 from chatbot.resources.company_resource import ChatSessionResource
-from chatbot.resources.bot_resource import CompanyBotResource
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.urls import path
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
+from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
+
 from django.shortcuts import render
 from itertools import chain
 from django.template.response import TemplateResponse
@@ -306,7 +306,7 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
 
 
 @admin.register(CompanyChat)
-class CompanyChatAdmin(ExportActionMixin, admin.ModelAdmin):
+class CompanyChatAdmin(ExportAllFieldsMixin, admin.ModelAdmin):
     list_display = ('session', 'sender', 'receiver', 'message', 'translated_message', 'created_at', 'stage')
     list_filter = (
         CustomAdvanceDateFilter,
@@ -317,13 +317,12 @@ class CompanyChatAdmin(ExportActionMixin, admin.ModelAdmin):
         'stage'
     )
     search_fields = ('session', 'message__icontains', 'translated_message__icontains')
-    actions = ['export_selected']
-    list_export = ('csv', 'xlsx')
     list_per_page = 20
     raw_id_fields = ('sender', 'receiver')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
 
+    export_filename = "company_chats.xlsx"
     resource_class = CompanyChatResource
 
     def get_queryset(self, request):
@@ -367,7 +366,7 @@ class CompanyChatAdmin(ExportActionMixin, admin.ModelAdmin):
 
 
 @admin.register(ChatSession)
-class ChatSessionAdmin(ExportActionMixin, admin.ModelAdmin):
+class ChatSessionAdmin(ExportAllFieldsMixin, admin.ModelAdmin):
     list_display = (
         'session', 'get_first_name', 'session_status', 'session_type', 'current_question', 'total_steps',
         'created_at'
