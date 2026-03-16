@@ -1,136 +1,532 @@
 {% extends "admin/base_site.html" %}
 
 {% block content %}
-<h1>{{ title }}</h1>
 
-<table style="width:100%; border-collapse: collapse;">
-    <thead>
-        <tr>
-            <th style="text-align:left; padding:8px;">Object</th>
-            <th style="text-align:left; padding:8px;">Date</th>
-            <th style="text-align:left; padding:8px;">User</th>
-            <th style="text-align:left; padding:8px;">Change type</th>
-            <th style="text-align:left; padding:8px;">Changes</th>
-        </tr>
-    </thead>
+<style>
 
-    <tbody>
-        {% for h in history_list %}
-        <tr style="border-top:1px solid #ddd;">
+.history-container{
+max-width:1200px;
+margin:auto;
+}
 
-            <td style="padding:8px;">
-                {% if h.step %}
-                    <a href="{% url 'admin:chatbot_historicalcompanystatemachine_change' h.history_id %}">
-                        StateMachine Step {{ h.step }}
-                    </a>
-                {% else %}
-                    <a href="{% url 'admin:chatbot_historicalcompanybot_change' h.history_id %}">
-                        {{ object }}
-                    </a>
-                {% endif %}
-            </td>
+.history-title{
+font-size:26px;
+font-weight:600;
+margin-bottom:20px;
+}
 
-            <td style="padding:8px;">
-                {{ h.history_date }}
-            </td>
+.history-table{
+width:100%;
+border-collapse:collapse;
+background:white;
+box-shadow:0 2px 6px rgba(0,0,0,0.08);
+border-radius:6px;
+overflow:hidden;
+margin-top:10px;
+}
 
-            <td style="padding:8px;">
-                {{ h.history_user|default:"None" }}
-            </td>
+.history-table thead{
+background:#f6f7f8;
+}
 
-            <td style="padding:8px;">
-                {{ h.get_history_type_display }}
-            </td>
+.history-table th{
+text-align:left;
+padding:12px;
+font-weight:600;
+border-bottom:1px solid #e0e0e0;
+}
 
-            <td style="padding:8px;">
-                {% if h.diff_html %}
-                    <button onclick="showDiff('{{ forloop.counter }}')"
-                        style="padding:4px 10px; cursor:pointer;">
-                        View diff
-                    </button>
+.history-table td{
+padding:12px;
+border-bottom:1px solid #eee;
+}
 
-                    <div id="diff{{ forloop.counter }}" style="display:none;">
-                        {% for d in h.diff_html %}
-                            <div style="margin-bottom:20px;">
-                                {{ d|safe }}
-                            </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    -
-                {% endif %}
-            </td>
+.history-table tr:hover{
+background:#fafafa;
+}
 
-        </tr>
-        {% endfor %}
-    </tbody>
+.view-btn{
+background:#417690;
+color:white;
+border:none;
+padding:6px 14px;
+border-radius:4px;
+cursor:pointer;
+font-size:13px;
+margin-right:5px;
+}
+
+.view-btn:hover{
+background:#2f5d75;
+}
+
+.revert-btn{
+background:#2ea44f;
+color:#ffffff !important;
+border:none;
+padding:6px 14px;
+border-radius:4px;
+cursor:pointer;
+font-size:13px;
+}
+
+.revert-btn:hover{
+background:#22863a;
+}
+
+.current-row{
+background:#e6ffed !important;
+}
+
+.section-title{
+font-size:22px;
+margin-top:35px;
+margin-bottom:10px;
+font-weight:600;
+}
+
+.collapsible-header{
+cursor:pointer;
+display:flex;
+justify-content:space-between;
+align-items:center;
+}
+
+.collapsible-header:hover{
+color:#417690;
+}
+
+.collapsible-content{
+display:none;
+margin-bottom:20px;
+}
+
+.modal-overlay{
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,0.5);
+display:none;
+align-items:center;
+justify-content:center;
+z-index:9999;
+backdrop-filter:blur(2px);
+}
+
+.modal-box{
+background:white;
+padding:25px;
+border-radius:8px;
+width:420px;
+box-shadow:0 10px 30px rgba(0,0,0,0.25);
+}
+
+.modal-title{
+font-size:20px;
+font-weight:600;
+margin-bottom:15px;
+}
+
+.modal-text{
+font-size:14px;
+margin-bottom:20px;
+color:#444;
+}
+
+.modal-actions{
+text-align:right;
+}
+
+.modal-actions button{
+margin-left:10px;
+padding:6px 14px;
+border:none;
+border-radius:4px;
+cursor:pointer;
+}
+
+.cancel-btn{
+background:#ddd;
+}
+
+.confirm-btn{
+background:#2ea44f;
+color:white;
+}
+
+</style>
+
+
+<div class="history-container">
+
+<h1 class="history-title">{{ title }}</h1>
+
+
+<!-- BOT HISTORY -->
+
+<h2 class="section-title collapsible-header"
+onclick="toggleSection('botHistory', this)">
+Bot History ({{ bot_history|length }}) ▼
+</h2>
+
+<div id="botHistory" class="collapsible-content">
+
+<table class="history-table">
+
+<thead>
+<tr>
+<th>Object</th>
+<th>Date</th>
+<th>User</th>
+<th>Change Type</th>
+<th>Actions</th>
+</tr>
+</thead>
+
+<tbody>
+
+{% for h in bot_history %}
+
+<tr class="{% if h.is_latest %}current-row{% endif %}">
+
+<td>{{ object }}</td>
+<td>{{ h.history_date }}</td>
+<td>{{ h.history_user|default:"System" }}</td>
+<td>{{ h.get_history_type_display }}</td>
+
+<td>
+
+{% if h.diff_html %}
+<button class="view-btn" onclick="showDiff('bot{{ forloop.counter }}')">
+View Diff
+</button>
+{% endif %}
+
+{% if not h.is_latest %}
+<button class="revert-btn"
+onclick="openRevertModal('{% url 'admin:companybot_revert' object.id 'bot' h.history_id %}')">
+Revert
+</button>
+{% else %}
+<span style="color:#999;font-size:13px;">Current</span>
+{% endif %}
+
+<div id="diffbot{{ forloop.counter }}" style="display:none;">
+{% for d in h.diff_html %}
+<div style="margin-bottom:20px;">
+{{ d|safe }}
+</div>
+{% endfor %}
+</div>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
 </table>
+
+</div>
+
+
+<!-- STATE MACHINE HISTORY -->
+
+<h2 class="section-title collapsible-header"
+onclick="toggleSection('smHistory', this)">
+State Machine History ({{ sm_history|length }}) ▼
+</h2>
+
+<div id="smHistory" class="collapsible-content">
+
+<table class="history-table">
+
+<thead>
+<tr>
+<th>Object</th>
+<th>Date</th>
+<th>User</th>
+<th>Change Type</th>
+<th>Actions</th>
+</tr>
+</thead>
+
+<tbody>
+
+{% for h in sm_history %}
+
+<tr class="{% if h.is_latest %}current-row{% endif %}">
+
+<td>StateMachine Step {{ h.step }}</td>
+<td>{{ h.history_date }}</td>
+<td>{{ h.history_user|default:"System" }}</td>
+<td>{{ h.get_history_type_display }}</td>
+
+<td>
+
+{% if h.diff_html %}
+<button class="view-btn" onclick="showDiff('sm{{ forloop.counter }}')">
+View Diff
+</button>
+{% endif %}
+
+{% if not h.is_latest %}
+<button class="revert-btn"
+onclick="openRevertModal('{% url 'admin:companybot_revert' object.id 'state' h.history_id %}')">
+Revert
+</button>
+{% else %}
+<span style="color:#999;font-size:13px;">Current</span>
+{% endif %}
+
+<div id="diffsm{{ forloop.counter }}" style="display:none;">
+{% for d in h.diff_html %}
+<div style="margin-bottom:20px;">
+{{ d|safe }}
+</div>
+{% endfor %}
+</div>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
+
+<!-- VOICE HISTORY -->
+
+<h2 class="section-title collapsible-header"
+onclick="toggleSection('voiceHistory', this)">
+Voice History ({{ voice_history|length }}) ▼
+</h2>
+
+<div id="voiceHistory" class="collapsible-content">
+
+<table class="history-table">
+
+<thead>
+<tr>
+<th>Voice</th>
+<th>Date</th>
+<th>User</th>
+<th>Change Type</th>
+<th>Actions</th>
+</tr>
+</thead>
+
+<tbody>
+
+{% for h in voice_history %}
+
+<tr class="{% if h.is_latest %}current-row{% endif %}">
+
+<td>
+{{ h.provider }} / {{ h.type }} / {{ h.language }}
+</td>
+<td>{{ h.history_date }}</td>
+<td>{{ h.history_user|default:"System" }}</td>
+<td>{{ h.get_history_type_display }}</td>
+
+<td>
+
+{% if h.diff_html %}
+<button class="view-btn" onclick="showDiff('voice{{ forloop.counter }}')">
+View Diff
+</button>
+{% endif %}
+
+<button class="revert-btn"
+onclick="openRevertModal('{% url 'admin:companybot_revert' object.id 'voice' h.history_id %}')">
+Revert
+</button>
+
+<div id="diffvoice{{ forloop.counter }}" style="display:none;">
+{% for d in h.diff_html %}
+<div style="margin-bottom:20px;">
+{{ d|safe }}
+</div>
+{% endfor %}
+</div>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
+</div>
+
+
+<!-- REVERT MODAL -->
+
+<div id="revertModal" class="modal-overlay">
+
+<div class="modal-box">
+
+<div class="modal-title">
+Revert to this version
+</div>
+
+<div class="modal-text">
+Are you sure you want to revert to this version?
+
+<br><br>
+
+Current bot configuration will be overwritten.
+</div>
+
+<div class="modal-actions">
+
+<button class="cancel-btn" onclick="closeModal()">
+Cancel
+</button>
+
+<button class="confirm-btn" onclick="confirmRevert()">
+Revert
+</button>
+
+</div>
+
+</div>
+
+</div>
 
 
 <script>
 
-function showDiff(id) {
+function toggleSection(id, header){
 
-    const content = document.getElementById("diff" + id).innerHTML;
+const section=document.getElementById(id)
 
-    const popup = window.open(
-        "",
-        "diff",
-        "width=1000,height=700,scrollbars=yes"
-    );
+if(section.style.display==="none" || section.style.display===""){
+section.style.display="block"
+header.innerHTML=header.innerHTML.replace("▼","▲")
+}else{
+section.style.display="none"
+header.innerHTML=header.innerHTML.replace("▲","▼")
+}
 
-    popup.document.write(`
-        <html>
-        <head>
-            <title>Change Diff</title>
+}
 
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    padding: 20px;
-                    background: #fff;
-                }
+document.addEventListener("DOMContentLoaded", function(){
 
-                table.diff {
-                    width:100%;
-                    border-collapse: collapse;
-                    font-size: 13px;
-                }
+// open state machine by default
+document.getElementById("smHistory").style.display="block"
 
-                .diff_header {
-                    background: #f7f7f7;
-                    padding: 4px;
-                }
+})
 
-                .diff_add {
-                    background: #d4ffd4;
-                }
+function showDiff(id){
 
-                .diff_sub {
-                    background: #ffd4d4;
-                }
+const content=document.getElementById("diff"+id).innerHTML
 
-                .diff_chg {
-                    background: #fff4c2;
-                }
+const popup=window.open("","diff","width=1200,height=800,scrollbars=yes")
 
-                td {
-                    padding: 4px;
-                }
+popup.document.write(`
 
-            </style>
+<html>
+<head>
+<title>Change Diff</title>
 
-        </head>
+<style>
 
-        <body>
+body{
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;
+padding:30px;
+background:#f7f7f7;
+}
 
-            <h2>Field Changes</h2>
+.diff-container{
+background:white;
+border-radius:8px;
+padding:20px;
+box-shadow:0 2px 10px rgba(0,0,0,0.1);
+overflow:auto;
+}
 
-            ${content}
+table.diff{
+width:100%;
+border-collapse:collapse;
+font-size:13px;
+font-family:monospace;
+}
 
-        </body>
-        </html>
-    `);
+.diff_add{background:#e6ffed}
+.diff_sub{background:#ffeef0}
+.diff_chg{background:#fff5b1}
+
+td{padding:6px 8px;border:1px solid #eee}
+
+</style>
+
+</head>
+
+<body>
+
+<h2>Field Changes</h2>
+
+<div class="diff-container">
+
+${content}
+
+</div>
+
+</body>
+
+</html>
+
+`)
+
+popup.document.close()
+
+}
+
+let revertUrl=null
+
+function openRevertModal(url){
+revertUrl=url
+document.getElementById("revertModal").style.display="flex"
+}
+
+function closeModal(){
+document.getElementById("revertModal").style.display="none"
+revertUrl=null
+}
+
+function confirmRevert(){
+
+if(revertUrl){
+
+const modal=document.getElementById("revertModal")
+modal.style.display="none"
+
+window.location.href=revertUrl
+
+}
+
+}
+
+window.onclick=function(event){
+
+const modal=document.getElementById("revertModal")
+
+if(event.target===modal){
+closeModal()
+}
 
 }
 

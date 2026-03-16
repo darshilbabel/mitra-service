@@ -18,12 +18,9 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
-
-from django.shortcuts import render
-from itertools import chain
 from django.template.response import TemplateResponse
 from operator import attrgetter
-from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot
+from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot, HistoricalVoice
 
 class CompanyStateMachineAdmin(admin.TabularInline):
     model = CompanyStateMachine
@@ -118,9 +115,49 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
                 self.admin_site.admin_view(self.import_view),
                 name='chatbot_companybot_import',
             ),
+            path(
+                "<int:object_id>/revert/<str:model>/<int:history_id>/",
+                self.admin_site.admin_view(self.revert_view),
+                name="companybot_revert",
+            ),
         ]
         # Important: custom URLs must come before the default admin URLs
         return custom_urls + urls
+
+    def revert_view(self, request, object_id, model, history_id):
+
+        if model == "bot":
+            history = HistoricalCompanyBot.objects.get(history_id=history_id)
+            instance = CompanyBot.objects.get(pk=object_id)
+
+        elif model == "voice":
+            history = HistoricalVoice.objects.get(history_id=history_id)
+            instance = Voice.objects.get(pk=history.id)
+
+        elif model == "state":
+            history = HistoricalCompanyStateMachine.objects.get(history_id=history_id)
+            instance = CompanyStateMachine.objects.get(pk=history.id)
+
+        else:
+            self.message_user(request, "Invalid revert target.", level=messages.ERROR)
+            return redirect(f"/admin/chatbot/companybot/{object_id}/change/")
+
+        for field in history._meta.fields:
+
+            if field.name in ["id", "history_id", "history_date", "history_user", "history_type"]:
+                continue
+
+            setattr(instance, field.name, getattr(history, field.name))
+
+        instance.save()
+
+        self.message_user(
+            request,
+            "Successfully reverted to selected version.",
+            level=messages.SUCCESS
+        )
+
+        return redirect(f"/admin/chatbot/companybot/{object_id}/change/")
 
     def export_view(self, request):
         """Handle export requests"""
@@ -196,14 +233,48 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
 
         bot_history = list(obj.history.all())
         sm_history = list(CompanyStateMachine.history.filter(company_bot=obj))
+        voice_history = list(Voice.history.filter(company_bot=obj))
 
-        history = list(chain(bot_history, sm_history))
-        history.sort(key=attrgetter("history_date"), reverse=True)
+        bot_history.sort(key=attrgetter("history_date"), reverse=True)
+        sm_history.sort(key=attrgetter("history_date"), reverse=True)
+        voice_history.sort(key=attrgetter("history_date"), reverse=True)
+
+        history = bot_history + sm_history + voice_history
+
+        latest_bot_marked = False
+        latest_steps = {}
 
         import difflib
 
         for record in history:
             try:
+                model_name = record._meta.model_name
+
+                if model_name == "historicalcompanybot":
+                    if not latest_bot_marked:
+                        record.is_latest = True
+                        latest_bot_marked = True
+                    else:
+                        record.is_latest = False
+
+                elif model_name == "historicalcompanystatemachine":
+                    step = record.step
+
+                    if step not in latest_steps:
+                        record.is_latest = True
+                        latest_steps[step] = True
+                    else:
+                        record.is_latest = False
+
+                elif model_name == "historicalvoice":
+                    if not hasattr(self, "_latest_voice"):
+                        record.is_latest = True
+                        self._latest_voice = True
+                    else:
+                        record.is_latest = False
+                else:
+                    record.is_latest = False
+
                 if hasattr(record, "instance"):
                     prev = record.instance.history.filter(
                         history_date__lt=record.history_date
@@ -216,8 +287,8 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
                         record.diff_html = []
 
                         for change in delta.changes:
-                            old = str(change.old or "")
-                            new = str(change.new or "")
+                            old = "" if change.old is None else str(change.old)
+                            new = "" if change.new is None else str(change.new)
 
                             diff = difflib.HtmlDiff().make_table(
                                 old.splitlines(),
@@ -229,7 +300,9 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
                             )
 
                             record.changes.append(change.field)
-                            record.diff_html.append(diff)
+                            record.diff_html.append(
+                                f"<h3 style='margin-top:25px;'>Field: {change.field}</h3>{diff}"
+                            )
 
                     else:
                         record.changes = []
@@ -242,7 +315,9 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
         context = {
             **self.admin_site.each_context(request),
             "title": f"History: {obj}",
-            "history_list": history,
+            "bot_history": bot_history,
+            "sm_history": sm_history,
+            "voice_history": voice_history,
             "object": obj,
             "opts": self.model._meta,
         }
@@ -440,8 +515,36 @@ class ChatSessionAdmin(ExportAllFieldsMixin, admin.ModelAdmin):
 admin.site.register(Company, CompanyAdmin)
 from simple_history.admin import SimpleHistoryAdmin
 
-admin.site.register(HistoricalCompanyStateMachine, SimpleHistoryAdmin)
-admin.site.register(HistoricalCompanyBot, SimpleHistoryAdmin)
+class HistoricalCompanyBotAdmin(admin.ModelAdmin):
+
+    readonly_fields = [field.name for field in HistoricalCompanyBot._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+class HistoricalCompanyStateMachineAdmin(admin.ModelAdmin):
+
+    readonly_fields = [field.name for field in HistoricalCompanyStateMachine._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+admin.site.register(HistoricalCompanyBot, HistoricalCompanyBotAdmin)
+admin.site.register(HistoricalCompanyStateMachine, HistoricalCompanyStateMachineAdmin)
 
 @admin.register(ImageConfiguration)
 class ImageConfigurationAdmin(admin.ModelAdmin):
