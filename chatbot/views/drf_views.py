@@ -12,7 +12,6 @@ from chatbot.serializer.company_serializer import (
     FlowLanguagesSerializer, FlowConnectionInfoSerializer
 )
 from chatbot.serializer.profile_serializer import ProfileSerializer, CompanyChatSerializer
-from chatbot.utils.shikshalokam_story_utils import get_flow
 
 
 class CompanyChatListCreateView(generics.ListCreateAPIView):
@@ -140,7 +139,10 @@ class FlowLanguagesView(generics.GenericAPIView):
             )
         
         try:
-            flow = get_flow(flow_route)
+            flow = Flow.objects.get(
+                flow_route=flow_route,
+                active=True
+            )
             
             serializer = self.get_serializer(flow)
             return Response(serializer.data)

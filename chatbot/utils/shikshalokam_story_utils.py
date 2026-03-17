@@ -29,9 +29,6 @@ import traceback
 base_url = os.getenv("SHIKSHALOKAM_BASE_URL")
 
 
-def get_flow(flow_route):
-    return Flow.objects.get(flow_route=flow_route, active=True)
-
 
 def save_shikshalokam_story(
         story, problem_statement, chat_history, access_token, project_id, session,
@@ -360,7 +357,7 @@ def get_story_html(story, profile, flow):
 
 def get_html_from_template(story, profile, flow, auth=False, language=None):
     project = Project.objects.filter(story=story).first()
-    flow_obj = get_flow(flow)
+    flow_obj = Flow.objects.get(flow_route=flow)
 
     language_used = language
 
