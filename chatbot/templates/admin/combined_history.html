@@ -198,11 +198,9 @@ Bot History ({{ bot_history|length }}) ▼
 
 <td>
 
-{% if h.diff_html %}
 <button class="view-btn" onclick="showDiff('bot{{ forloop.counter }}')">
 View Diff
 </button>
-{% endif %}
 
 {% if not h.is_latest %}
 <button class="revert-btn"
@@ -213,12 +211,11 @@ Revert
 <span style="color:#999;font-size:13px;">Current</span>
 {% endif %}
 
-<div id="diffbot{{ forloop.counter }}" style="display:none;">
-{% for d in h.diff_html %}
-<div style="margin-bottom:20px;">
-{{ d|safe }}
-</div>
-{% endfor %}
+<div id="diffbot{{ forloop.counter }}"
+     data-model="bot"
+     data-id="{{ h.history_id }}"
+     data-loaded="false"
+     style="display:none;">
 </div>
 
 </td>
@@ -268,11 +265,9 @@ State Machine History ({{ sm_history|length }}) ▼
 
 <td>
 
-{% if h.diff_html %}
 <button class="view-btn" onclick="showDiff('sm{{ forloop.counter }}')">
 View Diff
 </button>
-{% endif %}
 
 {% if not h.is_latest %}
 <button class="revert-btn"
@@ -283,12 +278,11 @@ Revert
 <span style="color:#999;font-size:13px;">Current</span>
 {% endif %}
 
-<div id="diffsm{{ forloop.counter }}" style="display:none;">
-{% for d in h.diff_html %}
-<div style="margin-bottom:20px;">
-{{ d|safe }}
-</div>
-{% endfor %}
+<div id="diffsm{{ forloop.counter }}"
+     data-model="state"
+     data-id="{{ h.history_id }}"
+     data-loaded="false"
+     style="display:none;">
 </div>
 
 </td>
@@ -339,23 +333,20 @@ Voice History ({{ voice_history|length }}) ▼
 
 <td>
 
-{% if h.diff_html %}
 <button class="view-btn" onclick="showDiff('voice{{ forloop.counter }}')">
 View Diff
 </button>
-{% endif %}
 
 <button class="revert-btn"
 onclick="openRevertModal('{% url 'admin:companybot_revert' object.id 'voice' h.history_id %}')">
 Revert
 </button>
 
-<div id="diffvoice{{ forloop.counter }}" style="display:none;">
-{% for d in h.diff_html %}
-<div style="margin-bottom:20px;">
-{{ d|safe }}
-</div>
-{% endfor %}
+<div id="diffvoice{{ forloop.counter }}"
+     data-model="voice"
+     data-id="{{ h.history_id }}"
+     data-loaded="false"
+     style="display:none;">
 </div>
 
 </td>
@@ -426,18 +417,13 @@ header.innerHTML=header.innerHTML.replace("▲","▼")
 document.addEventListener("DOMContentLoaded", function(){
 
 // open state machine by default
-document.getElementById("smHistory").style.display="block"
+{#document.getElementById("botHistory").style.display="block"#}
 
 })
 
-function showDiff(id){
+function buildDiffHTML(content){
 
-const content=document.getElementById("diff"+id).innerHTML
-
-const popup=window.open("","diff","width=1200,height=800,scrollbars=yes")
-
-popup.document.write(`
-
+return `
 <html>
 <head>
 <title>Change Diff</title>
@@ -480,18 +466,46 @@ td{padding:6px 8px;border:1px solid #eee}
 <h2>Field Changes</h2>
 
 <div class="diff-container">
-
 ${content}
-
 </div>
 
 </body>
 
 </html>
+`
 
-`)
+}
 
-popup.document.close()
+function showDiff(id){
+
+const container = document.getElementById("diff"+id)
+
+const model = container.dataset.model
+const historyId = container.dataset.id
+const isLoaded = container.dataset.loaded === "true"
+
+const popup=window.open("","diff","width=1200,height=800,scrollbars=yes")
+
+if(!isLoaded){
+
+popup.document.write("<h3>Loading...</h3>")
+
+fetch(`/admin/chatbot/companybot/diff/${model}/${historyId}/`)
+.then(res => res.json())
+.then(data => {
+
+container.innerHTML = data.html
+container.dataset.loaded = "true"
+
+popup.document.body.innerHTML = buildDiffHTML(data.html)
+
+})
+
+}else{
+
+popup.document.body.innerHTML = buildDiffHTML(container.innerHTML)
+
+}
 
 }
 
