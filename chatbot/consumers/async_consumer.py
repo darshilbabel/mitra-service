@@ -12,6 +12,7 @@ from chatbot.utils.audio_provider_utils import text_translate_provider
 import logging
 from channels.db import database_sync_to_async
 from chatbot.utils.transliterate_utils import transliterate_text
+from chatbot.utils.company_bot import get_company_bot
 import jwt
 
 logger = logging.getLogger('django')
@@ -61,7 +62,8 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
 
                 user_id = await self.handle_access_token(self.access_token)
 
-                self.company_bot = await self.get_company_bot(profile, self.bot_route)
+                self.company_bot = await database_sync_to_async(get_company_bot)(route=self.bot_route, profile=profile)
+
 
                 # Create chat session asynchronously
                 await self.create_chat_session(
@@ -181,12 +183,6 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
         logger.info("User_id: %s", user_id)
         return user_id
 
-    @database_sync_to_async
-    def get_company_bot(self, profile, route):
-        if profile:
-            return CompanyBot.objects.get(company=profile.company, route=route)
-        else:
-            return CompanyBot.objects.get(route=route)
 
     @database_sync_to_async
     def create_chat_session(self, session_id, profile, company_bot, ip_address, user_id):

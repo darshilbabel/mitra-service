@@ -1,10 +1,11 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from chatbot.models import ChatSession, CompanyChat, ChatStatus, Profile, CompanyBot
+from chatbot.models import ChatSession, CompanyChat, ChatStatus, Profile
 from chatbot.models.company_models import CompanyStateMachine
 import logging
 import traceback
+from chatbot.utils.company_bot import get_company_bot
 
 logger = logging.getLogger('django')
 
@@ -70,10 +71,7 @@ class AsyncBaseConsumer(AsyncWebsocketConsumer):
 
         profile = Profile.objects.filter(id=profile_id).first()
         try:
-            if profile:
-                company_bot = CompanyBot.objects.get(company=profile.company, route=route)
-            else:
-                company_bot = CompanyBot.objects.get(route=route)
+            company_bot = get_company_bot(route=route, profile=profile)
 
             state_machine = CompanyStateMachine.objects.filter(
                 company_bot=company_bot, step=chat_session.current_step

@@ -7,6 +7,7 @@ from chatbot.models import ChatStatus, ChatSession, Profile, CompanyBot, Voice, 
 from chatbot.celery_tasks.chaupal_tasks import get_chaupal_response
 from chatbot.models.company_models import CompanyStateMachine
 from chatbot.utils.audio_provider_utils import text_translate_provider
+from chatbot.utils.company_bot import get_company_bot
 import logging
 
 logger = logging.getLogger('django')
@@ -47,10 +48,7 @@ class ShikshalokamChaupalConsumer(BaseConsumer):
                     profile = Profile.objects.filter(id=self.profile_id).first()
                     print(f"Authenticated with session_id: {self.session_id}, profile_id: {self.profile_id}, "
                           f"route: {self.route}")
-                    if profile:
-                        self.company_bot = CompanyBot.objects.get(company=profile.company, route='/shikshalokam_chaupal')
-                    else:
-                        self.company_bot = CompanyBot.objects.get(route='/shikshalokam_chaupal')
+                    self.company_bot = get_company_bot(route='/shikshalokam_chaupal', profile=profile)
                     # chat session create (session, profile)
                     cs, cs_created = ChatSession.objects.get_or_create(
                         session=self.session_id,

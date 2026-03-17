@@ -17,7 +17,6 @@ from chatbot.models.company_models import Flow
 
 logger = logging.getLogger('django')
 
-
 def generate_session_id(request):
     try:
         session = SessionStore()

@@ -1,4 +1,5 @@
 from chatbot.models import CompanyChat, Profile, CompanyBot, ChatSession, BotVernacular
+from chatbot.utils.company_bot import get_company_bot
 import logging
 
 logger = logging.getLogger('django')
@@ -14,10 +15,7 @@ class BaseChatService:
         chat_session = ChatSession.objects.filter(session=session_id).first()
         profile = Profile.objects.filter(id=profile_id).first()
 
-        if profile:
-            company_bot = CompanyBot.objects.get(company=profile.company, route=bot_route)
-        else:
-            company_bot = CompanyBot.objects.get(route=bot_route)
+        company_bot = get_company_bot(route=bot_route, profile=profile)
 
         return {
             'company_chats': company_chats,

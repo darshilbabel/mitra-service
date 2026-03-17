@@ -16,6 +16,7 @@ from chatbot.utils.story_utils.chaupal.chaupal_story_tasks import save_chaupal_r
 from chatbot.utils.story_utils.format_utils import get_formatted_story
 from chatbot.utils.story_utils.mi_story_capture.mi_story_tasks import save_story
 from chatbot.utils.story_utils.ptm.ptm_story_tasks import save_ptm_story
+from chatbot.utils.shikshalokam_story_utils import get_flow
 
 import asyncio
 import logging
@@ -377,8 +378,7 @@ def generate_story(profile_id, session, access_token, flow, language='en'):
 
 def get_story_company_bot_simple(flow):
     try:
-        company_flow = Flow.objects.get(flow_route=flow)
-
+        company_flow = get_flow(flow)
         company_story_bot = company_flow.story_bot
         company_story_validation_bot = company_flow.story_validation_bot
 
