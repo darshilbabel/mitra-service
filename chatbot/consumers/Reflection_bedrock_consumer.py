@@ -107,7 +107,6 @@ class ReflectionBedrockConsumer(BaseConsumer):
 
                     if self.route != 'en':
                         profile = Profile.objects.get(id=self.profile_id)
-                        # company_bot = CompanyBot.objects.filter(company=profile.company, route='/reflection').first() 
                         company_bot = get_company_bot(route='/reflection', profile=profile)
                         voice_provider = Voice.objects.filter(
                             company_bot=company_bot, type=VoiceType.TextToText, language=self.route
