@@ -485,9 +485,6 @@ class Flow(models.Model):
         max_length=255,
         help_text="Name of the flow."
     )
-    company = models.ForeignKey(
-        Company, on_delete=models.CASCADE, help_text="Select the company this bot belongs to."
-    )
     flow_route = models.CharField(
         max_length=255,
         help_text="Route/path for accessing this flow.",

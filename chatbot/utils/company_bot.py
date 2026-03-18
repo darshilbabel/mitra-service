@@ -1,6 +1,15 @@
+import logging
 from chatbot.models import CompanyBot
 
-def get_company_bot(route: str, profile=None) -> CompanyBot:
-    if profile:
-        return CompanyBot.objects.get(company=profile.company, route=route)
-    return CompanyBot.objects.get(route=route)
+logger = logging.getLogger('django')
+
+
+def get_company_bot(route: str, profile=None) -> CompanyBot | None:
+    try:
+        if profile:
+            return CompanyBot.objects.filter(company=profile.company, route=route).first()
+        return CompanyBot.objects.filter(route=route).first()
+    except Exception as e:
+        logger.error("Error during company bot retrieval:", e)
+        return None
+    
