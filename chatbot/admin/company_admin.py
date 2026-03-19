@@ -18,7 +18,11 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
-
+from django.template.response import TemplateResponse
+from operator import attrgetter
+from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot, HistoricalVoice
+import difflib
+from django.http import JsonResponse
 
 class CompanyStateMachineAdmin(admin.TabularInline):
     model = CompanyStateMachine
@@ -33,7 +37,7 @@ class CompanyStateMachineAdmin(admin.TabularInline):
         'postprocess_type', 'postprocess_prompt', 'postprocess_bot', 'postprocess_output_mode',
         'skip_to_step',
     )
-    exclude = ('type',)  # ✅ hide type
+    exclude = ('type',)
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -113,9 +117,116 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
                 self.admin_site.admin_view(self.import_view),
                 name='chatbot_companybot_import',
             ),
+            path(
+                "<int:object_id>/revert/<str:model>/<int:history_id>/",
+                self.admin_site.admin_view(self.revert_view),
+                name="companybot_revert",
+            ),
+            path(
+                "diff/<str:model>/<int:history_id>/",
+                self.admin_site.admin_view(self.diff_view),
+                name="companybot_diff",
+            ),
         ]
-        # Important: custom URLs must come before the default admin URLs
         return custom_urls + urls
+
+    def diff_view(self, request, model, history_id):
+
+        if model == "bot":
+            record = HistoricalCompanyBot.objects.get(history_id=history_id)
+            model_class = CompanyBot
+
+        elif model == "voice":
+            record = HistoricalVoice.objects.get(history_id=history_id)
+            model_class = Voice
+
+        elif model == "state":
+            record = HistoricalCompanyStateMachine.objects.get(history_id=history_id)
+            model_class = CompanyStateMachine
+
+        else:
+            return JsonResponse({"html": "<h3>Invalid model</h3>"})
+
+        prev = model_class.history.filter(
+            id=record.id,
+            history_date__lt=record.history_date
+        ).order_by("-history_date").first()
+
+        diff_html = ""
+
+        if prev:
+            delta = record.diff_against(prev)
+
+            for change in delta.changes:
+                old = "" if change.old is None else str(change.old)
+                new = "" if change.new is None else str(change.new)
+
+                diff = difflib.HtmlDiff().make_table(
+                    old.splitlines(),
+                    new.splitlines(),
+                    fromdesc="Old",
+                    todesc="New",
+                    context=True,
+                    numlines=2
+                )
+
+                diff_html += f"<h3 style='margin-top:25px;'>Field: {change.field}</h3>{diff}"
+
+        return JsonResponse({"html": diff_html})
+
+    def revert_view(self, request, object_id, model, history_id):
+
+        if model == "bot":
+            history = HistoricalCompanyBot.objects.get(history_id=history_id)
+            instance = CompanyBot.objects.get(pk=history.id)
+
+        elif model == "voice":
+            history = HistoricalVoice.objects.get(history_id=history_id)
+            instance = Voice.objects.get(pk=history.id)
+
+        elif model == "state":
+            history = HistoricalCompanyStateMachine.objects.get(history_id=history_id)
+            instance = CompanyStateMachine.objects.get(pk=history.id)
+
+        else:
+            self.message_user(request, "Invalid revert target.", level=messages.ERROR)
+            return redirect(f"/admin/chatbot/companybot/{object_id}/change/")
+
+        for field in history._meta.fields:
+
+            if field.name in [
+                "id", "history_id", "history_date", "history_user", "history_type",
+            ]:
+                continue
+
+            if field.primary_key:
+                continue
+
+            setattr(instance, field.name, getattr(history, field.name))
+
+        if model == "state":
+            exists = CompanyStateMachine.objects.filter(
+                company_bot=instance.company_bot,
+                step=instance.step
+            ).exclude(pk=instance.pk).exists()
+
+            if exists:
+                self.message_user(
+                    request,
+                    f"Cannot revert: step {instance.step} already exists.",
+                    level=messages.ERROR
+                )
+                return redirect(f"/admin/chatbot/companybot/{object_id}/change/")
+
+        instance.save()
+
+        self.message_user(
+            request,
+            "Successfully reverted to selected version.",
+            level=messages.SUCCESS
+        )
+
+        return redirect(f"/admin/chatbot/companybot/{object_id}/change/")
 
     def export_view(self, request):
         """Handle export requests"""
@@ -170,21 +281,86 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
         return form
 
     def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
-        # This method is called when the admin change form is rendered.
         if object_id:
             obj = self.model.objects.get(pk=object_id)
             if obj.bot_type == CompanyBotTypeChoices.STATE_MACHINE:
-                # If the bot_type is 'state machine', include the inline.
                 self.inlines = [VoiceProviderAdmin, CompanyStateMachineAdmin]
 
             else:
-                # Otherwise, no inlines.
                 self.inlines = [VoiceProviderAdmin]
         else:
-            # For the add form, decide if you want the inline to be shown or not.
-            # This example assumes not.
             self.inlines = [VoiceProviderAdmin]
         return super().changeform_view(request, object_id, form_url, extra_context)
+
+    def history_view(self, request, object_id, extra_context=None):
+        obj = self.get_object(request, object_id)
+
+        bot_history = list(obj.history.all())
+        sm_history = list(CompanyStateMachine.history.filter(company_bot=obj))
+        voice_history = list(Voice.history.filter(company_bot=obj))
+
+        bot_history.sort(key=attrgetter("history_date"), reverse=True)
+        sm_history.sort(key=attrgetter("history_date"), reverse=True)
+        voice_history.sort(key=attrgetter("history_date"), reverse=True)
+
+        history = bot_history + sm_history + voice_history
+
+        latest_bot_marked = False
+        latest_steps = {}
+
+        import difflib
+
+        for record in history:
+            try:
+                model_name = record._meta.model_name
+
+                if model_name == "historicalcompanybot":
+                    if not latest_bot_marked:
+                        record.is_latest = True
+                        latest_bot_marked = True
+                    else:
+                        record.is_latest = False
+
+                elif model_name == "historicalcompanystatemachine":
+                    step = record.step
+
+                    if step not in latest_steps:
+                        record.is_latest = True
+                        latest_steps[step] = True
+                    else:
+                        record.is_latest = False
+
+                elif model_name == "historicalvoice":
+                    if not hasattr(self, "_latest_voice"):
+                        record.is_latest = True
+                        self._latest_voice = True
+                    else:
+                        record.is_latest = False
+                else:
+                    record.is_latest = False
+
+                record.changes = []
+                record.diff_html = []
+
+            except Exception:
+                record.changes = []
+                record.diff_html = []
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"History: {obj}",
+            "bot_history": bot_history,
+            "sm_history": sm_history,
+            "voice_history": voice_history,
+            "object": obj,
+            "opts": self.model._meta,
+        }
+
+        return TemplateResponse(
+            request,
+            "admin/combined_history.html",
+            context,
+        )
 
     def duplicate_bot(self, request, queryset):
         if queryset.count() != 1:
@@ -193,20 +369,17 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
 
         original = queryset.first()
 
-        # Duplicate the bot
         new_bot = CompanyBot.objects.get(pk=original.pk)
         new_bot.pk = None
         new_bot.name = f"{original.name} (Copy)"
         new_bot.save()
 
-        # Duplicate VoiceProvider inlines
         original_voice_providers = Voice.objects.filter(company_bot=original)
         for voice in original_voice_providers:
             voice.pk = None
             voice.company_bot = new_bot
             voice.save()
 
-        # Duplicate StateMachine if present
         if original.bot_type == CompanyBotTypeChoices.STATE_MACHINE:
             original_state_machines = CompanyStateMachine.objects.filter(company_bot=original)
             for sm in original_state_machines:
@@ -222,7 +395,6 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
         selected_ids = queryset.values_list('id', flat=True)
         ids_str = ','.join(str(id) for id in selected_ids)
 
-        # Use admin URL reverse with the app label and model name
         info = self.model._meta.app_label, self.model._meta.model_name
         url = reverse('admin:%s_%s_export' % info) + f'?ids={ids_str}'
         return HttpResponseRedirect(url)
@@ -362,16 +534,45 @@ class ChatSessionAdmin(ExportAllFieldsMixin, admin.ModelAdmin):
         user = request.user
         user_email = request.user.email
         profile = Profile.objects.filter(email=user_email)
-        # Check if the user is a moderator
         if not user.is_superuser and len(profile) > 0 and profile[0].profile_type == ProfileType.MODERATOR:
-            # Exclude the fields for moderators
             form.base_fields = {field_name: form.base_fields[field_name] for field_name in form.base_fields
                                 if field_name not in ['current_step']}
         return form
 
 
 admin.site.register(Company, CompanyAdmin)
+from simple_history.admin import SimpleHistoryAdmin
 
+class HistoricalCompanyBotAdmin(admin.ModelAdmin):
+
+    readonly_fields = [field.name for field in HistoricalCompanyBot._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+class HistoricalCompanyStateMachineAdmin(admin.ModelAdmin):
+
+    readonly_fields = [field.name for field in HistoricalCompanyStateMachine._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+admin.site.register(HistoricalCompanyBot, HistoricalCompanyBotAdmin)
+admin.site.register(HistoricalCompanyStateMachine, HistoricalCompanyStateMachineAdmin)
 
 @admin.register(ImageConfiguration)
 class ImageConfigurationAdmin(admin.ModelAdmin):

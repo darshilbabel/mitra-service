@@ -488,7 +488,6 @@ class Flow(models.Model):
     flow_route = models.CharField(
         max_length=255,
         help_text="Route/path for accessing this flow.",
-        unique=True
     )
     languages = models.JSONField(
         default=["en", "hi", "kn", "te"],
@@ -507,6 +506,12 @@ class Flow(models.Model):
         on_delete=models.CASCADE,
         related_name='flows',
         help_text="The main bot associated with this flow."
+    )
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='flows',
+        help_text="The company associated with this flow."
     )
     story_bot = models.ForeignKey(
         CompanyBot,
@@ -568,11 +573,11 @@ class Flow(models.Model):
     class Meta:
         verbose_name = "Flow"
         verbose_name_plural = "Flows"
+        unique_together = ('flow_route', 'company')
         indexes = [
-            models.Index(fields=['flow_route']),
             models.Index(fields=['bot']),
             models.Index(fields=['active']),
-            models.Index(fields=['hidden']),
+            models.Index(fields=['company']),
         ]
 
     def clean(self):

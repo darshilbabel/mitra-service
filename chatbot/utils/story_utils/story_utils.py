@@ -377,7 +377,8 @@ def generate_story(profile_id, session, access_token, flow, language='en'):
 
 def get_story_company_bot_simple(flow):
     try:
-        company_flow = Flow.objects.get(flow_route=flow)
+        company_flow = Flow.objects.get(flow_route=flow, active=True)
+
         company_story_bot = company_flow.story_bot
         company_story_validation_bot = company_flow.story_validation_bot
 

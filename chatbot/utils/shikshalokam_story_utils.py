@@ -357,7 +357,7 @@ def get_story_html(story, profile, flow):
 
 def get_html_from_template(story, profile, flow, auth=False, language=None):
     project = Project.objects.filter(story=story).first()
-    flow_obj = Flow.objects.get(flow_route=flow)
+    flow_obj = Flow.objects.get(flow_route=flow, active=True)
 
     language_used = language
 

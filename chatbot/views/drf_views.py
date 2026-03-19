@@ -173,7 +173,6 @@ class FlowConnectionInfoView(generics.GenericAPIView):
         try:
             flow = Flow.objects.select_related('bot', 'image_config').prefetch_related('child_flows').get(
                 flow_route=flow_route,
-                active=True
             )
             
             # Check if flow is active
