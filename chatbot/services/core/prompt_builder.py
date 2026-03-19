@@ -1,4 +1,7 @@
+import logging
 from chatbot.models import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
@@ -8,7 +11,15 @@ class PromptBuilder:
     def build_system_prompt(company_bot, state_machine=None):
         """Build system prompt based on provider type"""
 
-        system_parts = [company_bot.context.strip()]
+        system_parts = []
+
+        system_parts.append(company_bot.context.strip())
+
+        if company_bot.pre_context and company_bot.pre_context.strip():
+            logger.info(f"[PromptBuilder] Pre-context found for bot '{company_bot.name}': {company_bot.pre_context[:100]}...")
+            system_parts.append(company_bot.pre_context.strip())
+        else:
+            logger.debug(f"[PromptBuilder] No pre-context found for bot '{company_bot.name}'")
 
         if state_machine and state_machine.context:
             system_parts.append(state_machine.context.strip())

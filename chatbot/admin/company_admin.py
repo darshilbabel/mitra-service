@@ -166,6 +166,12 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
                 form.base_fields['company'].queryset = form.base_fields['company'].queryset.filter(
                     id=profile[0].company.id)
             form.base_fields = {field_name: form.base_fields[field_name] for field_name in form.base_fields}
+
+        if form.base_fields.get('context'):
+            form.base_fields['context'].label = 'Prompt'
+        if form.base_fields.get('pre_context'):
+            form.base_fields['pre_context'].label = 'Guardrails'
+
         form.base_fields = {field_name: form.base_fields[field_name] for field_name in form.base_fields}
         return form
 
