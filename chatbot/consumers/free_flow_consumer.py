@@ -8,6 +8,7 @@ import logging
 from channels.db import database_sync_to_async
 import jwt
 from chatbot.celery_tasks.free_flow_tasks import get_free_flow_response
+from chatbot.utils.company_bot import get_company_bot
 
 logger = logging.getLogger('django')
 
@@ -74,7 +75,7 @@ class FreeFlowConsumer(AsyncBaseConsumer):
                         }
                     }))
                     return
-                self.company_bot = await self.get_company_bot(profile, self.bot_route)
+                self.company_bot = await database_sync_to_async(get_company_bot)(route=self.bot_route, profile=profile)
 
                 # Create chat session asynchronously
                 await self.create_chat_session(
@@ -180,12 +181,6 @@ class FreeFlowConsumer(AsyncBaseConsumer):
         logger.info("User_id: %s", user_id)
         return user_id
 
-    @database_sync_to_async
-    def get_company_bot(self, profile, route):
-        if profile:
-            return CompanyBot.objects.get(company=profile.company, route=route)
-        else:
-            return CompanyBot.objects.get(route=route)
 
     @database_sync_to_async
     def create_chat_session(self, session_id, profile, company_bot, ip_address, user_id):

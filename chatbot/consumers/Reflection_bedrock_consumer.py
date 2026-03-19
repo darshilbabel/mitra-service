@@ -10,6 +10,7 @@ from chatbot.celery_tasks.reflection_bedrock_tasks import get_reflection_bedrock
 import jwt
 from chatbot.utils.audio_provider_utils import text_translate_provider
 from shikshalokam.utils.project_utils import check_and_save_project
+from chatbot.utils.company_bot import get_company_bot
 import logging
 
 
@@ -80,7 +81,7 @@ class ReflectionBedrockConsumer(BaseConsumer):
                             'profile': profile,
                             'current_step': 1,
                             'language': self.route,
-                            'company_bot': CompanyBot.objects.get(company=profile.company, route='/reflection'),
+                            'company_bot': get_company_bot(route='/reflection', profile=profile),
                             'session_status': ChatStatus.IN_PROGRESS,
                             'project_id': self.project_id,
                             'user_id': user_id,
@@ -106,7 +107,7 @@ class ReflectionBedrockConsumer(BaseConsumer):
 
                     if self.route != 'en':
                         profile = Profile.objects.get(id=self.profile_id)
-                        company_bot = CompanyBot.objects.filter(company=profile.company, route='/reflection').first()
+                        company_bot = get_company_bot(route='/reflection', profile=profile)
                         voice_provider = Voice.objects.filter(
                             company_bot=company_bot, type=VoiceType.TextToText, language=self.route
                         ).first()

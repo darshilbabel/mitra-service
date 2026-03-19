@@ -3,6 +3,7 @@ from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_mo
 from chatbot.models import CompanyBot, LLMProvider
 from jinja2 import Template
 from chatbot.utils.chat_utils import get_guided_chat
+from chatbot.utils.company_bot import get_company_bot
 import logging
 
 
@@ -13,12 +14,8 @@ def get_remaining_strands(messages, company_chats, oneshot_bot, profile, intro=N
 
     assistant_route = extra_params.get('assistant_route','/oneshot_assistant')
     validator_route = extra_params.get('validator_route','/oneshot_validator')
-    if profile:
-        company_bot = CompanyBot.objects.filter(company=profile.company, route=assistant_route).first()
-        validate_bot = CompanyBot.objects.filter(company=profile.company, route=validator_route).first()
-    else:
-        company_bot = CompanyBot.objects.filter(route=assistant_route).first()
-        validate_bot = CompanyBot.objects.filter(route=validator_route).first()
+    company_bot = get_company_bot(route=assistant_route, profile=profile)
+    validate_bot = get_company_bot(route=validator_route, profile=profile)
 
     tool = company_bot.tool_context
     if tool and isinstance(tool, str):

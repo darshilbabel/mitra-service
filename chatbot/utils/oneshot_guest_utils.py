@@ -1,3 +1,4 @@
+import profile
 import json_repair
 from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
 from chatbot.models import CompanyBot, LLMProvider
@@ -5,6 +6,7 @@ from jinja2 import Template
 from chatbot.utils.chat_utils import get_guided_chat
 import logging
 from chatbot.utils.one_shot_utils import get_assistant_prompt
+from chatbot.utils.company_bot import get_company_bot
 
 
 logger = logging.getLogger('django')
@@ -12,12 +14,8 @@ logger = logging.getLogger('django')
 
 def get_remaining_strands(messages, company_chats, oneshot_bot, profile, intro=None, other_info=None):
 
-    if profile:
-        company_bot = CompanyBot.objects.filter(company=profile.company, route='/oneshot_guest_assistant').first()
-        validate_bot = CompanyBot.objects.filter(company=profile.company, route='/oneshot_guest_validator').first()
-    else:
-        company_bot = CompanyBot.objects.filter(route='/oneshot_guest_assistant').first()
-        validate_bot = CompanyBot.objects.filter(route='/oneshot_guest_validator').first()
+    company_bot = get_company_bot(route='/oneshot_guest_assistant', profile=profile)
+    validate_bot = get_company_bot(route='/oneshot_guest_validator', profile=profile)
 
     tool = company_bot.tool_context
     if tool and isinstance(tool, str):

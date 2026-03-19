@@ -3,6 +3,7 @@ from chatbot.models import CompanyChat, Profile, CompanyBot, ChatStatus, LLMMode
     ChatType, StoryLanguageChoices
 from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
 from chatbot.utils.audio_provider_utils import text_translate_provider
+from chatbot.utils.company_bot import get_company_bot
 import json_repair
 
 from chatbot.utils.chat_utils import get_guided_chat
@@ -34,10 +35,10 @@ class ChatSession(models.Model):
 
     def save_title(self, language='en'):
         company_chats = CompanyChat.objects.select_related('sender', 'receiver').filter(session=self.session).order_by('created_at').values("receiver", "receiver__id", "translated_message", "message", "status", "created_at")
-        if self.profile:
-            company_bot = CompanyBot.objects.filter(company=self.profile.company, route='/mohini_title').first()
-        else:
-            company_bot = CompanyBot.objects.filter(route='/mohini_title').first()
+        try:
+            company_bot = get_company_bot(route='/mohini_title', profile=self.profile)
+        except CompanyBot.DoesNotExist:
+            company_bot = None
 
         messages = get_guided_chat(
             company_bot=company_bot, company_chats=company_chats

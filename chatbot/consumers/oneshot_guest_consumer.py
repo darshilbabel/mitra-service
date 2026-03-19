@@ -8,6 +8,7 @@ from chatbot.models import ChatStatus, ChatSession, Profile, CompanyBot, Voice, 
 from chatbot.celery_tasks.oneshot_guest_tasks import get_oneshot_guest_response
 from chatbot.models.company_models import CompanyStateMachine
 from chatbot.utils.audio_provider_utils import text_translate_provider
+from chatbot.utils.company_bot import get_company_bot
 import jwt
 import logging
 
@@ -113,10 +114,8 @@ class OneShotGuestConsumer(BaseConsumer):
                 profile = Profile.objects.filter(id=self.profile_id).first()
                 print(f"Authenticated with session_id: {self.session_id}, profile_id: {self.profile_id}, "
                       f"route: {self.route}, projectId: {self.project_id}, taskId: {self.task_id}")
-                if profile:
-                    self.company_bot = CompanyBot.objects.get(company=profile.company, route='/oneshot_guest')
-                else:
-                    self.company_bot = CompanyBot.objects.get(route='/oneshot_guest')
+                self.company_bot = get_company_bot(route='/oneshot_guest', profile=profile)
+
 
                 if self.task_id:
                     other_params = {
