@@ -102,7 +102,6 @@ class FlowImageConfigView(generics.GenericAPIView):
         try:
             flow = Flow.objects.select_related('image_config_id').get(
                 flow_route=flow_route,
-                active=True
             )
             
             if not flow.image_config_id:
