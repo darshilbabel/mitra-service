@@ -1,31 +1,41 @@
 import traceback
 from celery import shared_task
+
+from chatbot.llm_models.llm_script import handle_bedrock_model
+from chatbot.services.core.prompt_builder import PromptBuilder
 from chatbot.utils.llm import LLM
 from observability.utils.preparechats import get_chat_dict
 from observability.models.enums import TestCaseInputFormat, TCRunMetrics, TCStatus
-from chatbot.models import CompanyBot, LLMProvider
+from chatbot.models import CompanyBot, LLMProvider, CompanyChat, CompanyBotTypeChoices, CompanyStateMachine
 from chatbot.utils.env_parser import load_env_to_dict
-from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, ContextualPrecisionMetric, ContextualRecallMetric, ContextualRelevancyMetric, BiasMetric, ToxicityMetric, SummarizationMetric, PromptAlignmentMetric, HallucinationMetric
+from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, ContextualPrecisionMetric, ContextualRecallMetric, ContextualRelevancyMetric, BiasMetric, ToxicityMetric, SummarizationMetric, PromptAlignmentMetric, HallucinationMetric, GEval
 from observability.utils.deepeval import DeepEvalBaseLLM
-from deepeval.test_case import LLMTestCase
+from deepeval.test_case import LLMTestCase, ConversationalTestCase, Turn
 import json
 from django.db.models import Avg
+from chatbot.utils.chat_utils import get_guided_chat
 
 
 def execute_test_case(
     test_case,
-    model: str,
+    company_bot: CompanyBot,
     deepeval_llm_model: str,
     deepeval_llm_provider: str,
-    provider: str,
-    system_prompt: str,
     tc_run_id: int,
-    temperature: str = None,
-    provider_keys: str = None,
 ):
+
+    model = company_bot.llm_model
+    provider = company_bot.provider
+    temperature = company_bot.bot_temperature
+    provider_keys = company_bot.provider_keys
+    system_prompt = company_bot.context
 
     # dynamic imports due to circular dependencies
     from observability.models import CompanyBotTCRun, TCBotRunMetrics, BotRunTestCaseMap
+
+    # if provider == LLMProvider.BEDROCK_CONVERSE:
+    #     response = handle_bedrock_model(company_bot, system_prompt)
+
 
     metrics_val = {}
     deepeval_model_name = deepeval_llm_model
@@ -46,6 +56,11 @@ def execute_test_case(
             "model": deepeval_model,
             "include_reason": True
         }
+
+        if metric.metric_name == TCRunMetrics.GEVAL:
+            metrics_val[metric.metric_name] = GEval(
+                **metric_args)
+
         if metric.metric_name == TCRunMetrics.ANSWER_RELEVANCY:
             metrics_val[metric.metric_name] = AnswerRelevancyMetric(
                 **metric_args)
@@ -111,38 +126,61 @@ def execute_test_case(
         "errors": [],
         "metric_results": []
     }
+    company_chats = None
+    if test_case.chat_session:
+        company_chats = CompanyChat.objects.select_related('sender', 'receiver').filter(session=test_case.chat_session.session).order_by('created_at').values("receiver", "receiver__id", "translated_message", "message", "status", "created_at")
+
+        if company_bot.bot_type == CompanyBotTypeChoices.STATE_MACHINE:
+            state_machine = CompanyStateMachine.objects.get(company_bot=company_bot, step=test_case.chat_session.current_step)
+            system_prompt = PromptBuilder.build_system_prompt(company_bot, state_machine)
+            response_log["system_prompt"] = system_prompt
+
     if test_case.input_format == TestCaseInputFormat.JSON:
         try:
             if test_case.chat_session is not None:
-                test_case_message = get_chat_dict(test_case.chat_session)
+                test_case_message = get_guided_chat(company_bot, company_chats)
+
             else:
                 test_case_message = json.loads(test_case.message)
 
-            test_case_message = [{
-                "role": "system",
-                "content": system_prompt
-            }] + test_case_message
         except Exception as e:
             error_msg = f"[JSON Parse Error] TestCase {test_case.pk}: {str(e)}"
             print(error_msg)
             response_log["errors"].append(error_msg)
             pass
+
     actual_output = None
     try:
-        actual_output = llm.prompt(test_case_message).choices[0].message.content
+        if provider == LLMProvider.BEDROCK_CONVERSE:
+            actual_output = handle_bedrock_model(
+                company_bot=company_bot,
+                system_prompt=system_prompt if isinstance(system_prompt, list) else [{ "text": system_prompt }],
+                messages=test_case_message,
+                max_token=company_bot.max_token,
+                temperature=company_bot.bot_temperature,
+                model_name=company_bot.llm_model
+            )
         response_log["actual_output"] = actual_output
         print("Actual Output: ", actual_output)
     except Exception as e:
+        traceback.print_exc()
         error_msg = f"[LLM Prompt Error] TestCase {test_case.pk}: {str(e)}"
-        print(error_msg)
         response_log["errors"].append(error_msg)
     try:
-        test_case_llm = LLMTestCase(
-            input=testcase_input,
-            actual_output=actual_output,
-            expected_output=test_case.expected_output,
-            retrieval_context=test_case.retrieval_context.split("\n"),
-        )
+        if test_case.input_format == TestCaseInputFormat.JSON:
+            test_case_llm = LLMTestCase(
+                input=json.dumps(test_case_message),
+                actual_output=json.dumps(actual_output) if type(actual_output) is dict else actual_output,
+                expected_output=test_case.expected_output,
+                retrieval_context=test_case.retrieval_context.split("\n"),
+            )
+        else:
+            test_case_llm = LLMTestCase(
+                input=testcase_input,
+                actual_output=json.dumps(actual_output) if type(actual_output) is dict else actual_output,
+                expected_output=test_case.expected_output,
+                retrieval_context=test_case.retrieval_context.split("\n"),
+            )
         for metric in metrics_val:
             try:
                 print("Running metric evaluation for --> " + metric)
@@ -178,6 +216,7 @@ def execute_test_case(
 
         print("Eval Metrics printed: ", eval_metrics, len(eval_metrics))
     except Exception as eval_err:
+        traceback.print_exc()
         error_msg = f"[Eval Init Error] TestCase {test_case.pk}: {str(eval_err)}"
         print(error_msg)
         response_log["errors"].append(error_msg)
@@ -228,11 +267,7 @@ def run(company_bot_id: int, tc_run_id: int):
                     print("Running Test for: ", test_case)
                     execute_test_case(
                         test_case,
-                        model=company_bot.llm_model,
-                        provider=company_bot.provider,
-                        temperature=company_bot.bot_temperature,
-                        provider_keys=company_bot.provider_keys,
-                        system_prompt=company_bot.context,
+                        company_bot= company_bot,
                         tc_run_id=tc_run_id,
                         deepeval_llm_model=bot_tc_run.llm_model,
                         deepeval_llm_provider=bot_tc_run.provider,

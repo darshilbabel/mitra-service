@@ -15,6 +15,9 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 import django_filters
 import traceback
+import logging
+
+logger = logging.getLogger('django')
 
 
 @api_view(['POST'])
@@ -261,7 +264,7 @@ class StoryMediaListCreateView(generics.ListCreateAPIView):
             return response
 
         except Exception as e:
-            print("Error occurred: ", str(e))
+            logger.error("Error: %s", e, exc_info=True)
             raise
 
 

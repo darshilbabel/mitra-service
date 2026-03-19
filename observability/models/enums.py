@@ -30,3 +30,4 @@ class TCRunMetrics(models.TextChoices):
     PROMPT_ALLIGNMENT = 'prompt_allignment', _('PROMPT_ALLIGNMENT')
     HALLUCINATION = 'hallucination', _('HALLUCINATION')
     JSON_CORRECTNESS = 'json_correctness', _('JSON_CORRECTNESS')
+    GEVAL = 'geval', _('GEVAL')

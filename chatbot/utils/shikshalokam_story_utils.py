@@ -25,6 +25,9 @@ import os
 import re
 import requests
 import traceback
+import logging
+
+logger = logging.getLogger("django")
 
 base_url = os.getenv("SHIKSHALOKAM_BASE_URL")
 
@@ -246,7 +249,7 @@ def get_story_html(story, profile, flow):
         company_bot=company_bot, language=language_used
     ).first()
     if story_vernacular:
-        print(f"story_vernacular found: {story_vernacular.id} & {story_vernacular.company_bot} & {story_vernacular.language}")
+        logger.info(f"story_vernacular found: {story_vernacular.id} & {story_vernacular.company_bot} & {story_vernacular.language}")
     if language_used == 'en':
         object_to_pass = story
         if project:
@@ -259,7 +262,7 @@ def get_story_html(story, profile, flow):
             story_translation = story.translations.get(language=language_used)
             object_to_pass = story_translation
         except StoryTranslation.DoesNotExist:
-            print(f"Translation for language '{language_used}' not found, using English story")
+            logger.info(f"Translation for language '{language_used}' not found, using English story")
             object_to_pass = story
         if project:
             try:
