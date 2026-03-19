@@ -58,7 +58,7 @@ def post_profile(request):
         flow_route = data.get('latest_flow', None)
 
         if flow_route:
-            flow = Flow.objects.values('id').get(flow_route=flow_route)
+            flow = Flow.objects.values('id').get(flow_route=flow_route, active=True)
             data['latest_flow'] = flow.get('id')
 
         profile = Profile.objects.filter(email=email, company=company).first()
