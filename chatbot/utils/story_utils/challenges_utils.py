@@ -1,6 +1,7 @@
 from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
 from chatbot.models import CompanyBot, LLMProvider
 from chatbot.utils.story_utils.get_story_prompts import get_challenges_prompt
+from chatbot.utils.company_bot import get_company_bot
 import json_repair
 import logging
 
@@ -10,10 +11,7 @@ logger = logging.getLogger('django')
 
 
 def handle_challenges_solutions(challenges_faced, solutions_discussed, profile, messages):
-    if profile:
-            company_bot = CompanyBot.objects.get(company=profile.company, route='/chaupal-story-challenge')
-    else:
-        company_bot = CompanyBot.objects.get(route='/chaupal-story-challenge')
+    company_bot = get_company_bot(route='/chaupal-story-challenge', profile=profile)
 
     system_context = get_challenges_prompt(
         challenges_faced=challenges_faced, solutions_discussed=solutions_discussed,

@@ -7,6 +7,7 @@ from chatbot.models import ChatStatus, ChatSession, Profile, CompanyBot, Voice, 
 from chatbot.models.company_models import CompanyStateMachine
 from chatbot.utils.audio_provider_utils import text_translate_provider
 from chatbot.celery_tasks.guided_guest_tasks import get_guided_guest_response
+from chatbot.utils.company_bot import get_company_bot
 import logging
 
 from chatbot.utils.transliterate_utils import transliterate_text
@@ -114,10 +115,8 @@ class GuidedGuestConsumer(BaseConsumer):
                     profile = Profile.objects.filter(id=self.profile_id).first()
                     print(f"Authenticated with session_id: {self.session_id}, profile_id: {self.profile_id}, "
                           f"route: {self.route}, projectId: {self.project_id}, taskId: {self.task_id}")
-                    if profile:
-                        self.company_bot = CompanyBot.objects.get(company=profile.company, route='/guided_guest')
-                    else:
-                        self.company_bot = CompanyBot.objects.get(route='/guided_guest')
+                    self.company_bot = get_company_bot(route='/guided_guest', profile=profile)
+
                     if self.task_id:
                         other_params = {
                             "task_id": self.task_id

@@ -2,6 +2,7 @@ import json
 from channels.generic.websocket import WebsocketConsumer
 from chatbot.models import ChatSession, CompanyChat, ChatStatus, Profile, CompanyBot
 from chatbot.models.company_models import CompanyStateMachine
+from chatbot.utils.company_bot import get_company_bot
 
 
 class BaseConsumer(WebsocketConsumer):
@@ -31,10 +32,7 @@ class BaseConsumer(WebsocketConsumer):
         chat_session = ChatSession.objects.filter(session=session_id).first()
 
         profile = Profile.objects.filter(id=self.profile_id).first()
-        if profile:
-            company_bot = CompanyBot.objects.get(company=profile.company, route=route)
-        else:
-            company_bot = CompanyBot.objects.get(route=route)
+        company_bot = get_company_bot(route=route, profile=profile)
 
         state_machine = CompanyStateMachine.objects.filter(
             company_bot=company_bot, step=chat_session.current_step

@@ -8,6 +8,7 @@ from chatbot.utils.audio_provider_utils import text_translate_provider
 from chatbot.utils.transliterate_utils import transliterate_text
 from shikshalokam.models import Project, ProjectStatus
 from chatbot.models.enums import TextConversionType
+from chatbot.utils.company_bot import get_company_bot
 import json
 import jwt
 import logging
@@ -128,10 +129,7 @@ class AsyncBotResponseConsumer(AsyncBaseConsumer):
                 profile = Profile.objects.filter(id=self.profile_id).first()
                 print(f"Authenticated with session_id: {self.session_id}, profile_id: {self.profile_id}, "
                         f"route: {self.route}, projectId: {self.project_id}, taskId: {self.task_id}")
-                if profile:
-                    self.company_bot = CompanyBot.objects.get(company=profile.company, route=self.bot_route)
-                else:
-                    self.company_bot = CompanyBot.objects.get(route=self.bot_route)
+                self.company_bot = get_company_bot(route=self.bot_route, profile=profile)
 
                 other_params = {
                     **self.chat_context,

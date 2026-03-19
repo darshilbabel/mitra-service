@@ -2,6 +2,7 @@ from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_mo
 from chatbot.models import CompanyBot, LLMProvider
 from chatbot.utils.chat_utils import get_guided_chat
 from chatbot.utils.shiksha_chaupal.base_utils import get_guided_prompt
+from chatbot.utils.company_bot import get_company_bot
 import logging
 from dateutil import parser
 from datetime import datetime
@@ -16,10 +17,7 @@ INDIA_TZ = pytz.timezone("Asia/Kolkata")
 def handle_date_prompt(intro_mssg, profile, company_chats, other_info):
     bot_question = None
 
-    if profile:
-        company_bot = CompanyBot.objects.get(company=profile.company, route='/date-validator')
-    else:
-        company_bot = CompanyBot.objects.get(route='/date-validator')
+    company_bot = get_company_bot(route='/date-validator', profile=profile)
 
     prompt_to_use = get_guided_prompt(
         company_bot=company_bot, system_context=company_bot.context

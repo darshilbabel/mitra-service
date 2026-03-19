@@ -10,6 +10,7 @@ from chatbot.models.company_models import CompanyStateMachine
 from chatbot.utils.audio_provider_utils import text_translate_provider
 import logging
 from channels.db import database_sync_to_async
+from chatbot.utils.company_bot import get_company_bot
 
 from chatbot.utils.transliterate_utils import transliterate_text
 
@@ -65,7 +66,8 @@ class AsyncShikshalokamChaupalConsumer(AsyncBaseConsumer):
                     self.channel_name, self.session_id, self.profile_id, self.route
                 )
 
-                self.company_bot = await self.get_company_bot(profile, '/shikshalokam_chaupal')
+                self.company_bot = await database_sync_to_async(get_company_bot)(route='/shikshalokam_chaupal', profile=profile)
+
 
                 # Create chat session asynchronously
                 await self.create_chat_session(self.session_id, profile, self.company_bot)
@@ -136,12 +138,6 @@ class AsyncShikshalokamChaupalConsumer(AsyncBaseConsumer):
             return None
         return Profile.objects.filter(id=profile_id).first()
 
-    @database_sync_to_async
-    def get_company_bot(self, profile, route):
-        if profile:
-            return CompanyBot.objects.get(company=profile.company, route=route)
-        else:
-            return CompanyBot.objects.get(route=route)
 
     @database_sync_to_async
     def create_chat_session(self, session_id, profile, company_bot):

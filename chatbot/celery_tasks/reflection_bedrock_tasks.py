@@ -5,7 +5,7 @@ from chatbot.models.company_models import CompanyStateMachine
 from chatbot.utils.reflection_bedrock_tool_call import get_reflection_bedrock_tool_response
 from shikshalokam.models import Project
 from shikshalokam.utils.project_utils import get_project_formatted_data
-
+from chatbot.utils.company_bot import get_company_bot
 
 @shared_task
 def get_reflection_bedrock_response(channel_name, session_id, profile_id, route, project_id):
@@ -15,7 +15,7 @@ def get_reflection_bedrock_response(channel_name, session_id, profile_id, route,
         chat_session = ChatSession.objects.get(session=session_id)
         profile = Profile.objects.get(id=profile_id)
         ai_user = Profile.objects.get(id=1)
-        company_bot = CompanyBot.objects.get(company=profile.company, route='/reflection')
+        company_bot = get_company_bot(route='/reflection', profile=profile)
         state_machine = CompanyStateMachine.objects.get(company_bot=company_bot, step=chat_session.current_step)
         system_context = company_bot.context
         user_project = Project.objects.filter(project_id=project_id).first()

@@ -4,6 +4,7 @@ from chatbot.llm_models.llm_script import handle_openai_response_api
 from chatbot.celery_tasks.common_chat_tasks import save_in_company_db
 from chatbot.models import ChatStatus, Profile, CompanyBot, CompanyChat
 from chatbot.utils.chat_utils import get_guided_chat
+from chatbot.utils.company_bot import get_company_bot
 import logging
 import json
 
@@ -29,10 +30,10 @@ class FreeFlowService:
                 profile = Profile.objects.filter(id=profile_id).first()
             
             # Get company bot configuration
-            if profile:
-                company_bot = CompanyBot.objects.filter(company=profile.company, route=bot_route).first()
-            else:
-                company_bot = CompanyBot.objects.filter(route=bot_route).first()
+            try:
+                company_bot = get_company_bot(route=bot_route, profile=profile)
+            except CompanyBot.DoesNotExist:
+                company_bot = None
             
             if not company_bot:
                 logger.error(f"Company bot not found for route: {bot_route}")
