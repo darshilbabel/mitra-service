@@ -1,5 +1,5 @@
 from django.core.validators import MaxValueValidator, MinValueValidator
-from .enums import TestCaseInputFormat, TCRunStatus, TCRunMetrics, TCStatus
+from .enums import TestCaseInputType, TCRunStatus, TCRunMetrics, TCStatus
 from django.db import models
 from chatbot.models import CompanyBot, LLMModel, LLMProvider, ChatSession
 from observability.celery_tasks import llm_test_cases
@@ -22,8 +22,8 @@ class CompanyBotTestCases(models.Model):
         ChatSession, blank=True, null=True, on_delete=models.CASCADE)
     message = models.TextField(blank=True, null=True)
     retrieval_context = models.TextField(blank=True, null=True)
-    input_format = models.CharField(
-        max_length=100, choices=TestCaseInputFormat, default=TestCaseInputFormat.JSON)
+    input_type = models.CharField(
+        max_length=100, choices=TestCaseInputType, default=TestCaseInputType.MULTI_TURN)
 
     json_output_schema = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True, null=True)
