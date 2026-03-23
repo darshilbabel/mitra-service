@@ -2,9 +2,9 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 
-class TestCaseInputFormat(models.TextChoices):
-    JSON = 'json', _('JSON')
-    TEXT = 'text', _('TEXT')
+class TestCaseInputType(models.TextChoices):
+    SINGLE_TURN = 'json', _('JSON')
+    MULTI_TURN = 'text', _('TEXT')
 
 
 class TCRunStatus(models.TextChoices):

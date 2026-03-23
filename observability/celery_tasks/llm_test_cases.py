@@ -5,7 +5,7 @@ from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.services.core.prompt_builder import PromptBuilder
 from chatbot.utils.llm import LLM
 from observability.utils.preparechats import get_chat_dict
-from observability.models.enums import TestCaseInputFormat, TCRunMetrics, TCStatus
+from observability.models.enums import TestCaseInputType, TCRunMetrics, TCStatus
 from chatbot.models import CompanyBot, LLMProvider, CompanyChat, CompanyBotTypeChoices, CompanyStateMachine
 from chatbot.utils.env_parser import load_env_to_dict
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, ContextualPrecisionMetric, ContextualRecallMetric, ContextualRelevancyMetric, BiasMetric, ToxicityMetric, SummarizationMetric, PromptAlignmentMetric, HallucinationMetric, GEval
@@ -135,7 +135,7 @@ def execute_test_case(
             system_prompt = PromptBuilder.build_system_prompt(company_bot, state_machine)
             response_log["system_prompt"] = system_prompt
 
-    if test_case.input_format == TestCaseInputFormat.JSON:
+    if test_case.input_type == TestCaseInputType.MULTI_TURN:
         try:
             if test_case.chat_session is not None:
                 test_case_message = get_guided_chat(company_bot, company_chats)
@@ -167,7 +167,7 @@ def execute_test_case(
         error_msg = f"[LLM Prompt Error] TestCase {test_case.pk}: {str(e)}"
         response_log["errors"].append(error_msg)
     try:
-        if test_case.input_format == TestCaseInputFormat.JSON:
+        if test_case.input_type == TestCaseInputType.MULTI_TURN:
             test_case_llm = LLMTestCase(
                 input=json.dumps(test_case_message),
                 actual_output=json.dumps(actual_output) if type(actual_output) is dict else actual_output,
