@@ -59,6 +59,23 @@ class BaseResponseHandler(ABC):
             logger.error(f"Error checking response length: {e}")
             return False
 
+    def is_non_llm_state(self, state_machine):
+        return (
+                state_machine
+                and hasattr(state_machine, 'operation_type')
+                and state_machine.operation_type == OperationTypeChoices.NON_LLM
+        )
+
+    def build_non_llm_function_call(self, state_machine):
+        return {
+            "toolUseId": "non_llm_auto",
+            "name": "get_state_information",
+            "input": {
+                "next_state_name": state_machine.name,
+                "reason": "NON_LLM auto transition"
+            }
+        }
+
     def handle_response(self, **kwargs):
         """Main response handling method"""
         session_id = kwargs['session_id']
@@ -86,34 +103,29 @@ class BaseResponseHandler(ABC):
             logger.error(f"Error getting state machine: {e}")
             state_machine = None
 
-        # Check operation_type - if non_llm, automatically skip LLM and move to next step
-        if state_machine and hasattr(state_machine, 'operation_type'):
-            if state_machine.operation_type == OperationTypeChoices.NON_LLM:
-                kwargs['skip_llm'] = True
-                kwargs['skip_reason'] = 'non_llm_operation_type'
-                
-                # Only send bot_question if we haven't received user input for this state yet
-                # Check if there are any user messages for the current state
-                from chatbot.models import CompanyChat
-                user_messages_for_state = CompanyChat.objects.filter(
-                    session=session_id,
-                    stage=state_machine.name
-                ).exclude(message=state_machine.bot_question).exists()
-                
-                if not user_messages_for_state:
-                    # First time in this state - send the bot question
-                    kwargs['send_bot_question'] = True
-                    kwargs['bot_question_from_db'] = state_machine.bot_question if state_machine.bot_question else None
-                    logger.info(f"NON_LLM state {state_machine.name}: Sending initial bot question")
-                else:
-                    # User has already answered - proceed to next state
-                    kwargs['send_bot_question'] = False
-                    logger.info(f"NON_LLM state {state_machine.name}: User answered, will advance to next step")
+        if self.is_non_llm_state(state_machine):
+            from chatbot.models import CompanyChat
 
-        # Prepare original prompt
+            user_messages_for_state = CompanyChat.objects.filter(
+                session=session_id,
+                stage=state_machine.name
+            ).exclude(message=state_machine.bot_question).exists()
+
+            kwargs['skip_llm'] = True
+            kwargs['skip_reason'] = 'non_llm_operation_type'
+
+            if not user_messages_for_state:
+                kwargs['send_bot_question'] = True
+                kwargs['bot_question_from_db'] = state_machine.bot_question or None
+                logger.info(f"NON_LLM state {state_machine.name}: Asking question")
+
+            else:
+                kwargs['send_bot_question'] = False
+                kwargs['force_function_call'] = True
+                logger.info(f"NON_LLM state {state_machine.name}: Advancing to next state")
+
         original_prompt = kwargs.get('system_prompt', [])
 
-        # Execute preprocessing if state machine exists
         preprocessing_result = {'action': 'continue', 'prompt': original_prompt}
         if state_machine and state_machine.preprocess_output_mode not in [
             PreProcessOutputMode.NONE, PreProcessOutputMode.SKIP, PreProcessOutputMode.MODIFY_QUESTION
@@ -165,6 +177,10 @@ class BaseResponseHandler(ABC):
 
         if is_function_call and response is None:
             response = early_return
+        if kwargs.get('force_function_call') and state_machine:
+            is_function_call = True
+            response = self.build_non_llm_function_call(state_machine)
+
         if not is_function_call:
             is_function_call = self.is_function_call(response=response) if state_machine else False
         if is_function_call and state_machine and response:
