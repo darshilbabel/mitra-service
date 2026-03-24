@@ -659,7 +659,7 @@ class FlowAdmin(SimpleHistoryAdmin):
     form = FlowAdminForm
 
     list_display = (
-        'flow_name', 'flow_route', 'bot', 'active', 'hidden', 
+        'flow_name', 'flow_route', 'bot', 'company', 'active', 'hidden', 
         'user_type', 'created_at'
     )
     list_filter = (
@@ -669,7 +669,7 @@ class FlowAdmin(SimpleHistoryAdmin):
     search_fields = ('flow_name', 'flow_route', 'bot__name')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
-    raw_id_fields = ('bot', 'story_bot', 'parent_flow', 'image_config', 'story_validation_bot')
+    raw_id_fields = ('bot', 'story_bot', 'parent_flow', 'image_config', 'story_validation_bot', 'company')
     
     fieldsets = (
         ('Basic Information', {
@@ -680,7 +680,7 @@ class FlowAdmin(SimpleHistoryAdmin):
             'description': 'Configure the bots associated with this flow.'
         }),
         ('Flow Settings', {
-            'fields': ('active', 'hidden', 'user_type', 'parent_flow', 'image_config', 'create_story'),
+            'fields': ('active', 'hidden', 'user_type', 'company', 'parent_flow', 'image_config', 'create_story'),
         }),
         ('Advanced Settings', {
             'fields': ('websocket_url',),
