@@ -607,6 +607,13 @@ class CommonResponseHandler(BaseResponseHandler):
 
         else:
             chat_session.current_step += 1
+
+        total_steps = CompanyStateMachine.objects.filter(
+            company_bot=company_bot
+        ).count()
+
+        if chat_session.current_step >= total_steps:
+            chat_session.session_status = ChatStatus.COMPLETED
         chat_session.save()
 
         state_machine = CompanyStateMachine.objects.filter(
