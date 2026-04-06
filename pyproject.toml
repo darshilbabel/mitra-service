@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aiohttp==3.13.4",
     "asgiref>=3.11.0",
     "beautifulsoup4>=4.14.3",
     "boto3>=1.42.37",
@@ -14,9 +15,10 @@ dependencies = [
     "channels-redis>=4.3.0",
     "coreapi>=2.3.3",
     "coreschema>=0.0.4",
+    "cryptography==46.0.6",
     "daphne>=4.2.1",
     "deepeval>=3.8.2",
-    "django==5.2.0",
+    "django==5.2.12",
     "django-admin-rangefilter>=0.13.5",
     "django-celery-results>=2.6.0",
     "django-cors-headers>=4.9.0",
@@ -53,16 +55,19 @@ dependencies = [
     "pandas>=2.3.3",
     "pdf2image>=1.17.0",
     "pdfplumber>=0.11.9",
-    "pillow>=12.1.0",
+    "pillow==12.1.1",
     "pillow-heif>=1.2.0",
-    "protobuf>=6.33.4",
+    "protobuf==6.33.5",
     "psycopg2>=2.9.11",
+    "pyasn1==0.6.3",
     "pydantic>=2.12.5",
     "pydantic-core>=2.41.5",
     "pydantic-settings>=2.12.0",
     "pydub>=0.25.1",
-    "pyjwt>=2.10.1",
-    "pypdf>=6.6.2",
+    "pygments==2.20.0",
+    "pyjwt==2.12.0",
+    "pyopenssl==26.0.0",
+    "pypdf==6.9.2",
     "pypdf2>=3.0.1",
     "pytesseract>=0.3.13",
     "python-dateutil>=2.9.0.post0",
@@ -71,18 +76,21 @@ dependencies = [
     "pytz>=2025.2",
     "qdrant-client>=1.16.2",
     "redis>=7.1.0",
-    "requests>=2.32.5",
+    "requests==2.33.0",
     "retrying>=1.4.2",
     "sarvamai==0.1.26",
     "sentry-sdk>=2.51.0",
     "tablib>=3.9.0",
     "tabulate>=0.9.0",
     "tqdm>=4.67.1",
+    "ujson==5.12.0",
     "uuid>=1.30",
     "uvicorn>=0.40.0",
 ]
 
 [dependency-groups]
 dev = [
+    "pip-audit>=2.10.0",
     "ruff>=0.15.0",
 ]
+
