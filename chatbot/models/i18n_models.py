@@ -1,6 +1,8 @@
+import os
 from django.db import models
 from django.core.exceptions import ValidationError
 from simple_history.models import HistoricalRecords
+from chatbot.utils.i18n_helper_utils import handle_translation_s3, normalize_label
 
 
 class I18nTag(models.Model):
@@ -88,3 +90,124 @@ class I18nTranslation(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+
+class TranslationFile(models.Model):
+    """
+    Stores a complete translation JSON file for a specific language.
+    This represents a single uploaded translation file (usually synced with S3).
+    """
+
+    language = models.CharField(
+        max_length=10, null=False, blank=False,
+        help_text="Language code (e.g., 'en', 'hi', 'kn')"
+    )
+
+    data = models.JSONField(
+        help_text="Full translation JSON content", null=False, blank=False
+    )
+
+    s3_key = models.CharField(
+        max_length=500, null=True, blank=True,
+        help_text="S3 path (e.g., translations/home/en_v2.json)"
+    )
+
+    namespace = models.CharField(
+        max_length=100, null=False, blank=False,
+        help_text="Logical group of translations (e.g., 'home', 'chat')"
+    )
+    label = models.CharField(
+        max_length=100, null=False, blank=False,
+        help_text="Identifier used to distinguish different translation variations for the same "
+                  "namespace and language (e.g., different flows, bots)."
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = "Translation File"
+        verbose_name_plural = "Translation Files"
+        indexes = [
+            models.Index(fields=['namespace', 'language', 'label'])
+        ]
+        unique_together = ['namespace', 'language', 'label']
+
+    def __str__(self):
+        return f"{self.namespace} | {self.language} | {self.label}"
+
+    @property
+    def public_url(self):
+        if not self.s3_key:
+            return None
+
+        base_url = os.getenv("S3_MEDIA_URL", "").rstrip("/")
+        return f"{base_url}/{self.s3_key}"
+
+    def clean(self):
+        super().clean()
+        if self.language:
+            self.language = self.language.lower().strip()
+        if self.label:
+            self.label = normalize_label(self.label)
+        if not self.data:
+            raise ValueError("Translation data cannot be empty")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        self = handle_translation_s3(self)
+        super().save(*args, **kwargs)
+
+
+class FlowTranslationMapping(models.Model):
+    """
+    Defines which translation file is used in a flow,
+    for a specific domain (screen) and language.
+    """
+
+    flow = models.ForeignKey(
+        'Flow',
+        on_delete=models.CASCADE,
+        related_name='translation_mappings',
+        help_text="Flow where this translation will be used"
+    )
+
+    namespace = models.CharField(
+        max_length=100,
+        help_text="UI section or translation namespace (e.g., 'home', 'chat')"
+    )
+
+    language = models.CharField(
+        max_length=10,
+        help_text="Language code (e.g., 'en', 'hi')"
+    )
+
+    translation_file = models.ForeignKey(
+        TranslationFile,
+        on_delete=models.CASCADE,
+        related_name='flow_usages',
+        help_text="Translation file to use"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = "Flow Translation Mapping"
+        verbose_name_plural = "Flow Translation Mappings"
+        unique_together = ['flow', 'namespace', 'language']
+        indexes = [
+            models.Index(fields=['flow', 'language']),
+            models.Index(fields=['flow', 'namespace']),
+        ]
+
+    def __str__(self):
+        return f"{self.flow.flow_name} | {self.namespace} | {self.language}"
+
+    def clean(self):
+        if self.translation_file.language != self.language:
+            raise ValidationError("Language mismatch")
