@@ -4619,7 +4619,6 @@ dependencies = [
     { name = "tablib" },
     { name = "tabulate" },
     { name = "tqdm" },
-    { name = "ujson" },
     { name = "uuid" },
     { name = "uvicorn" },
 ]
@@ -4642,7 +4641,7 @@ requires-dist = [
     { name = "channels-redis", specifier = ">=4.3.0" },
     { name = "coreapi", specifier = ">=2.3.3" },
     { name = "coreschema", specifier = ">=0.0.4" },
-    { name = "cryptography", specifier = "==46.0.6" },
+    { name = "cryptography", specifier = ">=46.0.6" },
     { name = "daphne", specifier = ">=4.2.1" },
     { name = "deepeval", specifier = ">=3.8.2" },
     { name = "django", specifier = "==5.2.12" },
@@ -4686,7 +4685,7 @@ requires-dist = [
     { name = "pillow-heif", specifier = ">=1.2.0" },
     { name = "protobuf", specifier = "==6.33.5" },
     { name = "psycopg2", specifier = ">=2.9.11" },
-    { name = "pyasn1", specifier = "==0.6.3" },
+    { name = "pyasn1", specifier = ">=0.6.3" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-core", specifier = ">=2.41.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
@@ -4710,7 +4709,6 @@ requires-dist = [
     { name = "tablib", specifier = ">=3.9.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "ujson", specifier = "==5.12.0" },
     { name = "uuid", specifier = ">=1.30" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
