@@ -26,7 +26,7 @@ class TranslationFileAdmin(SimpleHistoryAdmin):
 
     fieldsets = (
         ('Translation File Info', {
-        'fields': ('namespace', 'label', 'language', 'data', 'get_s3_url')
+        'fields': ('namespace', 'language', 'label', 'data', 'get_s3_url')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -54,19 +54,21 @@ class TranslationFileAdmin(SimpleHistoryAdmin):
 @admin.register(FlowTranslationMapping)
 class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
     list_display = (
-        'flow', 'namespace', 'language', 'translation_file', 'created_at',
+        'flow', 'translation_file', 'created_at',
     )
 
     list_filter = (
-        'flow', 'namespace', 'language', CustomAdvanceDateFilter
+        'flow', CustomAdvanceDateFilter
     )
 
     search_fields = (
-        'flow__flow_name', 'namespace', 'translation_file__s3_key',
+        'flow__flow_name', 'translation_file__s3_key',
     )
 
     ordering = (
-        'flow', 'namespace', 'language',
+        'flow',
+        'translation_file__namespace',
+        'translation_file__language',
     )
 
     raw_id_fields = (
@@ -77,7 +79,7 @@ class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
 
     fieldsets = (
         ('Mapping Info', {
-            'fields': ('flow', 'namespace', 'language', 'translation_file')
+            'fields': ('flow', 'translation_file')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

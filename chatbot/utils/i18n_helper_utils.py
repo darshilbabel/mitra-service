@@ -15,9 +15,11 @@ def normalize_label(label: str) -> str:
 def handle_translation_s3(instance):
     """
     Handles S3 upload + versioning (scoped per namespace + language + label)
+    Also handles namespace/label changes properly
     """
 
     from chatbot.models import TranslationFile
+
     existing = None
 
     if instance.id:
@@ -26,15 +28,30 @@ def handle_translation_s3(instance):
         except TranslationFile.DoesNotExist:
             pass
 
-    if existing and existing.data == instance.data:
+    new_namespace = instance.namespace
+    new_label = instance.label
+
+    old_namespace = existing.namespace if existing else None
+    old_label = existing.label if existing else None
+
+    namespace_changed = existing and (old_namespace != new_namespace)
+    label_changed = existing and (old_label != new_label)
+    path_changed = namespace_changed or label_changed
+
+    data_changed = not (existing and existing.data == instance.data)
+
+    # CASE 1: NOTHING CHANGED
+    if existing and not data_changed and not path_changed:
         instance.s3_key = existing.s3_key
         return instance
 
-    if existing:
+    # CASE 2: SAME PATH, ONLY DATA CHANGED → version bump
+    if existing and not path_changed:
         match = re.search(r"_v(\d+)\.json$", existing.s3_key or "")
         current_version = int(match.group(1)) if match else 0
         new_version = current_version + 1
     else:
+        # CASE 3: NEW PATH (namespace/label changed OR new object)
         new_version = 1
 
     file_name = f"{instance.language}_v{new_version}.json"
@@ -44,14 +61,25 @@ def handle_translation_s3(instance):
         file_content=json.dumps(instance.data).encode("utf-8"),
         content_type="application/json",
         project_id=None,
-        folder_structure=f"translations/{instance.namespace}/{instance.label}/",
+        folder_structure=f"translations/{new_namespace}/{new_label}/",
     )
 
     if not uploaded_key:
         raise Exception("S3 upload failed")
 
     instance.s3_key = uploaded_key
+
+    # Cleanup current folder
     cleanup_old_versions(instance, keep_last_n=2)
+
+    # Cleanup old folder if path changed
+    if existing and path_changed:
+        old_prefix = f"translations/{old_namespace}/{old_label}/"
+        old_files = list_files_in_s3(prefix=old_prefix)
+
+        if old_files:
+            keys = [f["Key"] for f in old_files]
+            delete_files_from_s3(keys=keys)
 
     return instance
 

@@ -118,8 +118,24 @@ class TranslationFile(models.Model):
     )
     label = models.CharField(
         max_length=100, null=False, blank=False,
-        help_text="Identifier used to distinguish different translation variations for the same "
-                  "namespace and language (e.g., different flows, bots)."
+        help_text="""
+        Defines a logical variant/group of translation files.
+
+        This is used to group related translations across namespaces into a single variant
+        (e.g., a specific flow experience, experiment, or release).
+
+        Examples:
+        - 'default' → base/stable translations
+        - 'mitra_guest' → guest user experience
+        - 'teacher_dashboard' → teacher-specific UI
+        - 'experiment_a' → A/B testing variant
+
+        IMPORTANT:
+        - This is NOT related to file versioning (e.g., _v1, _v2 in S3 keys).
+        - Multiple labels can exist for the same namespace and language.
+        - A label does NOT automatically apply anywhere — it is used only when mapped to a flow via 
+        FlowTranslationMapping.
+        """
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -174,16 +190,6 @@ class FlowTranslationMapping(models.Model):
         help_text="Flow where this translation will be used"
     )
 
-    namespace = models.CharField(
-        max_length=100,
-        help_text="UI section or translation namespace (e.g., 'home', 'chat')"
-    )
-
-    language = models.CharField(
-        max_length=10,
-        help_text="Language code (e.g., 'en', 'hi')"
-    )
-
     translation_file = models.ForeignKey(
         TranslationFile,
         on_delete=models.CASCADE,
@@ -199,15 +205,10 @@ class FlowTranslationMapping(models.Model):
     class Meta:
         verbose_name = "Flow Translation Mapping"
         verbose_name_plural = "Flow Translation Mappings"
-        unique_together = ['flow', 'namespace', 'language']
+        unique_together = ['flow', 'translation_file']
         indexes = [
-            models.Index(fields=['flow', 'language']),
-            models.Index(fields=['flow', 'namespace']),
+            models.Index(fields=['flow', 'translation_file']),
         ]
 
     def __str__(self):
-        return f"{self.flow.flow_name} | {self.namespace} | {self.language}"
-
-    def clean(self):
-        if self.translation_file.language != self.language:
-            raise ValidationError("Language mismatch")
+        return f"{self.flow.flow_name} | {self.translation_file.namespace} | {self.translation_file.language}"
