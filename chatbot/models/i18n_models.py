@@ -178,8 +178,10 @@ class TranslationFile(models.Model):
             raise ValueError("Translation data cannot be empty")
 
     def save(self, *args, **kwargs):
+        skip_s3 = kwargs.pop("skip_s3", False)
         self.full_clean()
-        self = handle_translation_s3(self)
+        if not skip_s3:
+            self = handle_translation_s3(self)
         super().save(*args, **kwargs)
 
 

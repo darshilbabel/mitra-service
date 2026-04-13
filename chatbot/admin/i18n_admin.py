@@ -4,12 +4,14 @@ from django.contrib import admin
 from django.db import transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect
-from django.urls import path
+from django.urls import path, reverse
 from django.utils.html import format_html
 from simple_history.admin import SimpleHistoryAdmin
 from chatbot.filter.custom_date_from_filter import CustomAdvanceDateFilter
 from chatbot.form.i18n_form import TranslationFileAdminForm
 from chatbot.models import TranslationFile, FlowTranslationMapping, Flow
+from chatbot.utils.S3.s3_service import is_same_bucket, s3_file_exists
+from chatbot.utils.i18n_helper_utils import handle_translation_s3
 
 
 @admin.register(TranslationFile)
@@ -84,7 +86,7 @@ class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
     )
 
     readonly_fields = ('created_at', 'updated_at')
-    # actions = ['export_flow_translations']
+    actions = ['export_flow_translations']
 
     fieldsets = (
         ('Mapping Info', {
@@ -158,14 +160,24 @@ class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
         from django.shortcuts import render
 
         if request.method == "GET":
-            return render(request, "admin/import_export/import.html")
+            context = dict(
+                self.admin_site.each_context(request),
+                opts=self.model._meta,
+            )
+
+            return render(request, "admin/i18n/import_form.html", context)
 
         if request.method == "POST":
             file = request.FILES.get("file")
 
             if not file:
                 self.message_user(request, "No file uploaded", level="error")
-                return redirect("..")
+
+                return redirect(
+                    reverse(
+                        f'admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist'
+                    )
+                )
 
             try:
                 data = json.load(file)
@@ -174,7 +186,11 @@ class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
             except Exception as e:
                 self.message_user(request, f"Import failed: {str(e)}", level="error")
 
-            return redirect("..")
+            return redirect(
+                reverse(
+                    f'admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist'
+                )
+            )
 
     @transaction.atomic
     def process_import(self, data, request):
@@ -209,12 +225,35 @@ class FlowTranslationMappingAdmin(SimpleHistoryAdmin):
                         if meta.get("s3_key"):
                             defaults["s3_key"] = meta["s3_key"]
 
-                        tf, created = TranslationFile.objects.update_or_create(
-                            namespace=namespace,
-                            language=lang,
-                            label=label,
-                            defaults=defaults
-                        )
+                        tf = TranslationFile.objects.filter(
+                            namespace=namespace, language=lang, label=label
+                        ).first()
+
+                        if tf:
+                            tf.data = translation_json
+                            if meta.get("s3_key"):
+                                tf.s3_key = meta["s3_key"]
+
+                            if tf.s3_key and not s3_file_exists(tf.s3_key):
+                                # re-upload only if missing
+                                handle_translation_s3(tf)
+
+                            tf.save(skip_s3=True)
+                            created = False
+                        else:
+                            tf = TranslationFile(
+                                namespace=namespace,
+                                language=lang,
+                                label=label,
+                                data=translation_json,
+                                s3_key=meta.get("s3_key")
+                            )
+                            if tf.s3_key and not s3_file_exists(tf.s3_key):
+                                # re-upload only if missing
+                                handle_translation_s3(tf)
+
+                            tf.save(skip_s3=True)
+                            created = True
 
                         if created:
                             created_count += 1

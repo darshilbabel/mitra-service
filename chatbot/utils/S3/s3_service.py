@@ -143,3 +143,15 @@ def delete_files_from_s3(keys: list[str]):
 
     except Exception as e:
         print(f"S3 delete error: {str(e)}")
+
+
+def is_same_bucket(existing_key, new_key):
+    if not existing_key or not new_key:
+        return True
+
+    return existing_key.split("/")[0] == new_key.split("/")[0]
+
+
+def s3_file_exists(key):
+    files = list_files_in_s3(prefix=key)
+    return any(f["Key"] == key for f in files)
