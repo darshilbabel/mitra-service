@@ -119,22 +119,28 @@ class TranslationFile(models.Model):
     label = models.CharField(
         max_length=100, null=False, blank=False,
         help_text="""
-        Defines a logical variant/group of translation files.
+        Defines a logical variant/group of translation files.<br><br>
 
         This is used to group related translations across namespaces into a single variant
-        (e.g., a specific flow experience, experiment, or release).
+        (e.g., a specific flow experience, experiment, or release).<br><br>
+        For simplicity and consistency, you can keep the label the same as the flow_route (e.g., flow_route="teacher_dashboard"
+        → label="teacher_dashboard").
+        <br/><br/><b>Examples:</b>
+        <ul>
+          <li>'common_flow' → fallback translations used when a specific flow mapping is not available</li>
+          <li>'mitra_guest' → guest user experience</li>
+          <li>'teacher_dashboard' → teacher-specific UI</li>
+          <li>'experiment_a' → A/B testing variant</li>
+        </ul>
 
-        Examples:
-        - 'default' → base/stable translations
-        - 'mitra_guest' → guest user experience
-        - 'teacher_dashboard' → teacher-specific UI
-        - 'experiment_a' → A/B testing variant
-
-        IMPORTANT:
-        - This is NOT related to file versioning (e.g., _v1, _v2 in S3 keys).
-        - Multiple labels can exist for the same namespace and language.
-        - A label does NOT automatically apply anywhere — it is used only when mapped to a flow via 
-        FlowTranslationMapping.
+        <br/><b>IMPORTANT:</b>
+        <ul>
+          <li>Label should be lowercase and use only letters, numbers, hyphens, and underscores; spaces and other special characters are automatically converted to underscores (e.g., "Teacher Dashboard" → "teacher_dashboard", "exp-a" → "exp-a").</li>
+          <li>This is NOT related to file versioning (e.g., _v1, _v2 in S3 keys).</li>
+          <li>Multiple labels can exist for the same namespace and language.</li>
+          <li>Currently, labels are used only for logical grouping/organization.</li>
+          <li>Labels affect API responses ONLY if explicitly passed as a filter.</li>
+        </ul>
         """
     )
 

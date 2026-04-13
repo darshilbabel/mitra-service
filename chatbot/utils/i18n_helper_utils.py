@@ -6,7 +6,7 @@ from chatbot.utils.S3.s3_service import upload_file_to_s3, list_files_in_s3, del
 
 def normalize_label(label: str) -> str:
     label = label.strip().lower()
-    label = re.sub(r'[^a-z0-9]+', '_', label)
+    label = re.sub(r'[^a-z0-9-]+', '_', label)
     label = re.sub(r'_+', '_', label)
     return label.strip('_')
 

@@ -1,6 +1,7 @@
+import json
 from django.contrib import admin
 from django.db.models import Q
-from pydantic import ValidationError
+from django.core.exceptions import ValidationError
 from simple_history.admin import SimpleHistoryAdmin
 from .generic_upload_admin import BatchUploadMixin
 from chatbot.filter.admin_filter import (CompanyChatCompanyFilter, ChatSessionFilter, ProfileCityFilter,
@@ -23,6 +24,9 @@ from operator import attrgetter
 from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot, HistoricalVoice
 import difflib
 from django.http import JsonResponse
+
+from ..widgets.json_widget import PrettyJSONWidget
+
 
 class CompanyStateMachineAdmin(admin.TabularInline):
     model = CompanyStateMachine
@@ -629,6 +633,14 @@ class FlowAdminForm(ModelForm):
     class Meta:
         model = Flow
         fields = "__all__"
+        widgets = {
+            "ui_config": PrettyJSONWidget(
+                attrs={
+                    "rows": 10,
+                    "style": "font-family: monospace; white-space: pre; width: 100%;"
+                }
+            )
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -649,6 +661,17 @@ class FlowAdminForm(ModelForm):
         invalid = [code for code in value if code not in allowed]
         if invalid:
             raise ValidationError(f"Invalid language codes: {', '.join(invalid)}")
+
+        return value
+
+    def clean_ui_config(self):
+        value = self.cleaned_data.get("ui_config")
+
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except Exception:
+                raise ValidationError("Invalid JSON format")
 
         return value
 
@@ -680,7 +703,10 @@ class FlowAdmin(SimpleHistoryAdmin):
             'description': 'Configure the bots associated with this flow.'
         }),
         ('Flow Settings', {
-            'fields': ('active', 'hidden', 'user_type', 'company', 'parent_flow', 'image_config', 'create_story'),
+            'fields': (
+                'active', 'hidden', 'user_type', 'company', 'parent_flow', 'image_config', 'create_story',
+                'ui_config',
+            ),
         }),
         ('Advanced Settings', {
             'fields': ('websocket_url',),
@@ -691,7 +717,7 @@ class FlowAdmin(SimpleHistoryAdmin):
             'classes': ('collapse',)
         }),
     )
-    
+
     readonly_fields = ('created_at', 'updated_at')
     
     def formfield_for_dbfield(self, db_field, request, **kwargs):
