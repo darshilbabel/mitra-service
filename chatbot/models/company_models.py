@@ -563,6 +563,13 @@ class Flow(models.Model):
         help_text="Whether to post process the story or not"
     )
 
+    ui_config = models.JSONField(
+        default=dict,
+        blank=True,
+        null=False,
+        help_text="UI level configuration like button visibility, layout toggles, etc."
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     history = HistoricalRecords()
@@ -595,8 +602,21 @@ class Flow(models.Model):
                 'languages': "Language codes must be unique."
             })
 
+        if self.ui_config is None:
+            self.ui_config = {}
+
+        if not isinstance(self.ui_config, dict):
+            raise ValidationError({
+                'ui_config': "ui_config must be a valid JSON object."
+            })
+
+
     def save(self, *args, **kwargs):
         self.clean()
+
+        if self.ui_config in [None, "", []]:
+            self.ui_config = {}
+
         super().save(*args, **kwargs)
 
 

@@ -97,3 +97,61 @@ def upload_media(
         "url": media_url,
         "file_name": file_name,
     }
+
+
+def list_files_in_s3(prefix: str):
+    try:
+        s3_client = boto3.client(
+            "s3",
+            region_name=os.getenv("AWS_REGION"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
+
+        response = s3_client.list_objects_v2(
+            Bucket=os.getenv("S3_BUCKET_NAME"),
+            Prefix=prefix,
+        )
+
+        return response.get("Contents", [])
+
+    except Exception as e:
+        print(f"S3 list error: {str(e)}")
+        return []
+
+
+def delete_files_from_s3(keys: list[str]):
+    try:
+        if not keys:
+            return
+
+        s3_client = boto3.client(
+            "s3",
+            region_name=os.getenv("AWS_REGION"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
+
+        delete_payload = {
+            "Objects": [{"Key": key} for key in keys]
+        }
+
+        s3_client.delete_objects(
+            Bucket=os.getenv("S3_BUCKET_NAME"),
+            Delete=delete_payload,
+        )
+
+    except Exception as e:
+        print(f"S3 delete error: {str(e)}")
+
+
+def is_same_bucket(existing_key, new_key):
+    if not existing_key or not new_key:
+        return True
+
+    return existing_key.split("/")[0] == new_key.split("/")[0]
+
+
+def s3_file_exists(key):
+    files = list_files_in_s3(prefix=key)
+    return any(f["Key"] == key for f in files)

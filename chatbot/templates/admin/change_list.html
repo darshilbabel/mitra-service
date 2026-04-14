@@ -47,5 +47,14 @@
 </li>
 {% endif %}
 
+{# Import button for FlowTranslationMapping #}
+{% if opts.model_name == 'flowtranslationmapping' %}
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="{% url 'admin:flow_translation_import' %}" class="btn btn-primary">
+    <i class="fas fa-file-import"></i> {% trans 'Import Translations' %}
+  </a>
+</li>
+{% endif %}
+
 {% endif %}
 {% endblock %}

@@ -11,6 +11,7 @@ from chatbot.views.admin.generic_upload_views import GenericBatchUploadView, Gen
     GenericBatchImportView
 from chatbot.views.aws_views import get_presigned_url
 from chatbot.views.gotenberg_view import generate_pdf_view, generate_pdf_view_v2
+from chatbot.views.i18n_views import I18nConfigView
 from chatbot.views.kafka_views import sync_user_project_view
 from chatbot.views.location_views import get_location_view, get_ip_location_view
 from chatbot.views.Media.media_views import MediaSearchView
@@ -133,6 +134,7 @@ urlpatterns = [
     path('admin/<str:app_label>/<str:model_name>/batch-import/', GenericBatchImportView.as_view(),
          name='generic_batch_import'),
 
+    path('api/i18n-config', I18nConfigView.as_view(), name='i18n-config'),
 
     # Media API endpoints
     path('api/v1/', include(router.urls)),
