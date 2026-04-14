@@ -480,4 +480,6 @@ CRONJOBS = [
      '>> /tmp/handle_village_ingestion_cron.log 2>&1'),
     ('0 22 * * *', 'chatbot.cron_tasks.translation_cron.handle_non_english_fix_cron',
      '>> /tmp/handle_non_english_fix_cron.log 2>&1'),
+     ('0 12 * * *', 'chatbot.cron_tasks.delhi_shiksha_samvad.story_creation.create_story',
+    '>> /tmp/delhi_shiksha_samvad_story_creation.log 2>&1')
 ]

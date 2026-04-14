@@ -212,7 +212,7 @@ def retry_if_result_none(result):
 def handle_bedrock_model(
         company_bot, system_prompt=None, messages=None, max_token=None, temperature=None, top_p=None,
         model_name=None, region_name='us-west-2', tools=None, is_json_response=False, aws_key=None,
-        aws_secret_key=None
+        aws_secret_key=None, stop_sequences=None
 ):
     # Support company_bot as either dict or model instance
     if isinstance(company_bot, dict):
@@ -252,6 +252,8 @@ def handle_bedrock_model(
         inference_config['temperature'] = temperature
     if top_p:
         inference_config['topP'] = top_p
+    if stop_sequences:
+        inference_config['stopSequences'] = stop_sequences
     # Remove trailing assistant message
     if messages and messages[-1]['role'] == 'assistant':
         messages.pop()
