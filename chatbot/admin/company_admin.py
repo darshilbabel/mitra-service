@@ -18,6 +18,7 @@ from django.urls import path
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
+from ..constants.flow_ui_config import get_default_ui_config
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
 from django.template.response import TemplateResponse
 from operator import attrgetter
@@ -647,6 +648,9 @@ class FlowAdminForm(ModelForm):
 
         value = self.instance.languages if self.instance and self.instance.pk else None
         self.fields["languages"].initial = value or ["en", "hi", "kn", "te"]
+
+        if not self.instance or not self.instance.pk:
+            self.fields["ui_config"].initial = get_default_ui_config()
 
     def clean_languages(self):
         value = self.cleaned_data.get("languages", [])
