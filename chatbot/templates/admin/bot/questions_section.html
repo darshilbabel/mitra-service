@@ -1,0 +1,38 @@
+<div class="card">
+    <h2>Questions Setup</h2>
+
+    <div class="step">
+        <div class="step-title">1. Download Sample</div>
+        <p class="step-desc">
+            Download the template with predefined format and dropdowns.
+        </p>
+        <a class="link-btn" href="{% url 'admin:chatbot_companybot_download_sample' %}">
+            Download Sample XLSX
+        </a>
+    </div>
+
+    <div class="step">
+        <div class="step-title">2. Fill Data</div>
+        <p class="step-desc">
+            Do not change column names — it may break bot generation.
+        </p>
+        <p class="step-tip">
+            “Is Probing Required” supports dropdown (Yes / No).
+        </p>
+    </div>
+
+    <div class="step">
+        <div class="step-title">3. Upload File</div>
+
+        <input
+            type="file"
+            id="questions_file"
+            name="questions_file"
+            accept=".xlsx"
+            class="file-input"
+        >
+
+        <div id="file-error" class="error-text"></div>
+        <div id="file-warning" class="warning-text"></div>
+    </div>
+</div>
