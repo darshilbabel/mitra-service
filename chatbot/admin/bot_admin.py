@@ -16,6 +16,7 @@ from operator import attrgetter
 from chatbot.models import HistoricalCompanyStateMachine, HistoricalCompanyBot, HistoricalVoice
 import difflib
 from django.http import JsonResponse
+from ..form.bot_form import CompanyBotAdminForm
 from ..utils.bot.bot_generation import generate_bot_prompt
 
 
@@ -56,6 +57,7 @@ class VoiceProviderAdmin(admin.TabularInline):
 
 @admin.register(CompanyBot)
 class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
+    form = CompanyBotAdminForm
     list_display = ('name', 'company', 'created_at')
     list_filter = (
         'company',
@@ -226,9 +228,14 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
         print("request.method: ", request.method)
         if request.method == "POST":
             persona = request.POST.get("persona")
+            opening_message = request.POST.get("opening_message")
+            closing_message = request.POST.get("closing_message")
             file = request.FILES.get("questions_file")
 
-            result = generate_bot_prompt(persona, file)
+            print("Opening message: ", opening_message)
+            print("Closing message: ", closing_message)
+
+            result = generate_bot_prompt(persona, file, opening_message, closing_message)
 
             return JsonResponse(result)
 

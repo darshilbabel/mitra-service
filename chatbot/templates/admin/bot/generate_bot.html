@@ -14,7 +14,8 @@ document.addEventListener("DOMContentLoaded", function() {
         const persona = document.querySelector("textarea[name='persona']").value;
         const fileInput = document.getElementById("questions_file");
         const file = fileInput.files[0];
-
+        const openingMessage = document.querySelector("textarea[name='opening_message']").value;
+        const closingMessage = document.querySelector("textarea[name='closing_message']").value;
         const errorDiv = document.getElementById("file-error");
         const warningDiv = document.getElementById("file-warning");
 
@@ -26,14 +27,14 @@ document.addEventListener("DOMContentLoaded", function() {
             return;
         }
 
-        warningDiv.innerText = "Bot generation started. Check after ~5 minutes.";
-
         btn.innerText = "Generating...";
         btn.disabled = true;
 
         const formData = new FormData();
         formData.append("persona", persona);
         formData.append("questions_file", file);
+        formData.append("opening_message", openingMessage);
+        formData.append("closing_message", closingMessage);
 
         try {
             console.log("Submitting POST to:", window.location.href);
@@ -191,12 +192,13 @@ input[type="file"] {
 </style>
 
 <div class="container">
-    <h1>Generate Bot</h1>
+    <h1>Generate StateMachine Bots</h1>
 
     <form id="generate-bot-form" method="post" enctype="multipart/form-data">
         {% csrf_token %}
 
         {% include "admin/bot/persona_section.html" %}
+        {% include "admin/bot/opening_closing_section.html" %}
         {% include "admin/bot/questions_section.html" %}
 
         <div style="text-align: right;">

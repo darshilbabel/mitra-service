@@ -1,0 +1,40 @@
+<div class="card">
+    <h2>Opening & Closing Messages</h2>
+
+    <!-- Opening Message -->
+    <div class="step">
+        <div class="step-title">1. Opening Message</div>
+
+        <p class="step-desc">
+            This is the first message shown to the user when the bot starts.
+        </p>
+
+        <p class="step-tip">
+            Note: This should be in <b>English only</b>.
+        </p>
+
+        <textarea
+            name="opening_message"
+            placeholder="Enter opening message..."
+        ></textarea>
+    </div>
+
+    <!-- Closing Message -->
+    <div class="step">
+        <div class="step-title">2. Closing Message (Mandatory)</div>
+
+        <p class="step-desc">
+            This message will be shown after the entire flow is completed.
+        </p>
+
+        <p class="step-tip">
+            Note: This will be created as a <b>NON-LLM state</b> and shown to the user after the flow ends.
+        </p>
+
+        <textarea
+            name="closing_message"
+            placeholder="Enter closing message..."
+            required
+        ></textarea>
+    </div>
+</div>
