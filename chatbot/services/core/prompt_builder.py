@@ -8,7 +8,7 @@ class PromptBuilder:
     """Centralized prompt building logic"""
 
     @staticmethod
-    def build_system_prompt(company_bot, state_machine=None):
+    def build_system_prompt(company_bot, state_machine=None, other_data=None):
         """Build system prompt based on provider type"""
 
         system_parts = []
@@ -26,6 +26,9 @@ class PromptBuilder:
 
         if state_machine and state_machine.completion_criteria:
             system_parts.append(f"Completion Criteria:\n{state_machine.completion_criteria.strip()}")
+
+        if other_data:
+            system_parts.append(f"Other Data:\n{str(other_data).strip()}")
 
         tool_context = ""
         if (state_machine and

@@ -107,8 +107,25 @@ def handle_openai_model(
         else:
             model_to_use = LLMModel.GPT4_O_MINI
 
-        if system_prompt and isinstance(system_prompt, list):
-            messages = system_prompt+messages
+        if isinstance(system_prompt, list):
+            fixed_system = []
+
+            for msg in system_prompt:
+                content = msg.get("content")
+
+                if isinstance(content, list):
+                    inner = content[0]
+                    if isinstance(inner, dict):
+                        content = inner.get("content") or inner.get("text", "")
+                    else:
+                        content = str(inner)
+
+                fixed_system.append({
+                    "role": msg.get("role", "system"),
+                    "content": content
+                })
+
+            messages = fixed_system + messages
 
         request_data = {
             "model": model_to_use,

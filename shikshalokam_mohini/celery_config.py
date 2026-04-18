@@ -24,5 +24,6 @@ app.autodiscover_tasks([
     'chatbot.celery_tasks.knowledge_service.media_tasks',
     'chatbot.celery_tasks.flow_tasks',
     'chatbot.celery_tasks.free_flow_tasks',
-    'chatbot.celery_tasks.post_processing_tasks'
+    'chatbot.celery_tasks.post_processing_tasks',
+    'chatbot.utils.bot.bot_generation.py'
 ])

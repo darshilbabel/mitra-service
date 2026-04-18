@@ -1,0 +1,212 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const form = document.getElementById("generate-bot-form");
+    const btn = document.querySelector(".submit-btn");
+
+    form.addEventListener("submit", async function(e) {
+        e.preventDefault();
+
+        const persona = document.querySelector("textarea[name='persona']").value;
+        const fileInput = document.getElementById("questions_file");
+        const file = fileInput.files[0];
+        const openingMessage = document.querySelector("textarea[name='opening_message']").value;
+        const closingMessage = document.querySelector("textarea[name='closing_message']").value;
+        const errorDiv = document.getElementById("file-error");
+        const warningDiv = document.getElementById("file-warning");
+
+        errorDiv.innerText = "";
+        warningDiv.innerText = "";
+
+        if (!file) {
+            errorDiv.innerText = "Please upload an XLSX file.";
+            return;
+        }
+
+        btn.innerText = "Generating...";
+        btn.disabled = true;
+
+        const formData = new FormData();
+        formData.append("persona", persona);
+        formData.append("questions_file", file);
+        formData.append("opening_message", openingMessage);
+        formData.append("closing_message", closingMessage);
+
+        try {
+            console.log("Submitting POST to:", window.location.href);
+            const response = await fetch(window.location.href, {
+                method: "POST",
+                body: formData,
+                headers: {
+                    "X-CSRFToken": document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            });
+            console.log("Response status:", response.status);
+
+            const data = await response.json();
+
+            if (data.error) {
+                errorDiv.innerText = data.error;
+                btn.innerText = "⚡ Start Bot Generation";
+                btn.disabled = false;
+                return;
+            }
+
+            Swal.fire({
+                title: "Bot Generation Started",
+                text: "Your bot is being created. Please check after ~5 minutes.",
+                icon: "success",
+                confirmButtonText: "OK",
+                confirmButtonColor: "#2c7be5"
+            }).then(() => {
+                window.location.href = "/admin/chatbot/companybot/";
+            });
+
+        } catch (err) {
+            errorDiv.innerText = "Something went wrong. Please try again.";
+        }
+
+        btn.innerText = "⚡ Start Bot Generation";
+        btn.disabled = false;
+    });
+});
+</script>
+
+{% endblock %}
+
+
+{% block content %}
+
+<style>
+.container {
+    max-width: 900px;
+    margin: auto;
+}
+
+
+.card h2 {
+    margin-bottom: 12px;
+    font-size: 18px;
+}
+
+textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+
+input[type="file"] {
+    margin-top: 8px;
+}
+
+.submit-btn {
+    background: linear-gradient(135deg, #2c7be5, #1a5fd0);
+    color: white;
+    padding: 12px 18px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.submit-btn:hover {
+    opacity: 0.9;
+}
+
+.submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.card {
+    background: #fff;
+    padding: 22px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    border: 1px solid #e5e7eb;
+}
+
+.step {
+    padding: 14px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.step:last-child {
+    border-bottom: none;
+}
+
+.step-title {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 4px;
+}
+
+.step-desc {
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 8px;
+}
+
+.step-tip {
+    font-size: 13px;
+    color: #1d4ed8;
+}
+
+.link-btn {
+    display: inline-block;
+    padding: 10px 16px;
+    background: linear-gradient(135deg, #2c7be5, #1a5fd0);
+    color: #fff !important;
+    border-radius: 6px;
+    text-decoration: none !important;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.link-btn:hover {
+    background: #1a5fd0;
+    color: #fff !important;
+}
+
+.file-input {
+    margin-top: 8px;
+}
+
+.error-text {
+    color: #e74c3c;
+    margin-top: 8px;
+}
+
+.warning-text {
+    color: #f39c12;
+    margin-top: 5px;
+}
+</style>
+
+<div class="container">
+    <h1>Generate StateMachine Bots</h1>
+
+    <form id="generate-bot-form" method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        {% include "admin/bot/persona_section.html" %}
+        {% include "admin/bot/opening_closing_section.html" %}
+        {% include "admin/bot/questions_section.html" %}
+
+        <div style="text-align: right;">
+            <button type="submit" class="submit-btn">
+                Start Bot Generation
+            </button>
+        </div>
+    </form>
+</div>
+
+{% endblock %}
