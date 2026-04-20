@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 from celery import shared_task
+from jinja2 import Template
 from openpyxl import load_workbook
 import logging
 import os
@@ -328,6 +329,18 @@ def process_single_state(idx, state, global_context):
                 "status": "failed",
                 "error": "Company bot not found"
             }
+
+        raw_context = company_bot.context or ""
+        context_data = {
+            "guard_rails_context": getattr(guard_rails_bot, "context", ""),
+        }
+
+        try:
+            rendered_context = Template(raw_context).render(context_data)
+        except Exception as e:
+            rendered_context = raw_context
+
+        company_bot.context = rendered_context
         prompt_builder = PromptBuilder()
         other_data = {
             "Input Instruction": f"\n {state_str}",
