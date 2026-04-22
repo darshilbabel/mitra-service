@@ -45,6 +45,7 @@ LANGUAGE_CHOICES = [
     ("hi", "Hindi"),
     ("kn", "Kannada"),
     ("te", "Telugu"),
+    ("or", "Odia"),
 ]
 
 
