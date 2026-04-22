@@ -21,10 +21,9 @@ def translate_text(
 
         credentials = service_account.Credentials.from_service_account_file(settings.SECRETS_JSON_PATH)
         client = translate.TranslationServiceClient(credentials=credentials)
-        location = "global"
 
-        parent = f"projects/{project_id}/locations/{location}"
         location = other_params.get("location", "global")
+        parent = f"projects/{project_id}/locations/{location}"
         glossary_id = other_params.get("glossary_id")
 
         request = {

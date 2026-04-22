@@ -490,7 +490,7 @@ class Flow(models.Model):
         help_text="Route/path for accessing this flow.",
     )
     languages = models.JSONField(
-        default=["en", "hi", "kn", "te"],
+        default=["en", "hi", "kn", "te", "or"],
         help_text="List of supported language codes (e.g., ['en', 'hi', 'kn'])."
     )
     hidden = models.BooleanField(

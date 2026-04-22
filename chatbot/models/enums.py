@@ -279,6 +279,7 @@ class StoryLanguageChoices(models.TextChoices):
     HINDI = 'hi', _('Hindi')
     KANNADA = 'kn', _('Kannada')
     TELUGU = 'te', _('Telugu')
+    ODIA = 'or', _('Odia')
 
 
 class StorySourceChoices(models.TextChoices):
@@ -354,6 +355,7 @@ class RouteLanguageChoices(models.TextChoices):
     HINDI = 'hi', _('/hindi')
     KANNADA = 'kn', _('/kannada')
     TELUGU = 'te', _('/telugu')
+    ODIA = 'or', _('/odia')
 
 
 class VoiceProvider(models.TextChoices):
@@ -389,6 +391,7 @@ class LanguageMapping:
         "hi": {"IN": "hi-IN"},
         "kn": {"IN": "kn-IN"},
         "te": {"IN": "te-IN"},
+        "or": {"IN": "or-IN"},
     }
 
     @classmethod
@@ -398,6 +401,18 @@ class LanguageMapping:
         Defaults to '<code>-IN' if not found.
         """
         return cls.MAPPING.get(language_code, {}).get(region, f"{language_code}-IN")
+
+    @classmethod
+    def get_google_translate_language(cls, language_code: str, region: str = "IN") -> str:
+        mapped = cls.get_mapped_language(language_code, region)
+        return mapped.split("-")[0] if "-" in mapped else mapped
+
+    @classmethod
+    def get_sarvam_language(cls, language_code: str, region: str = "IN") -> str:
+        normalized = (language_code or "").lower()
+        if normalized in {"or", "od", "odia"}:
+            return "od-IN"
+        return cls.get_mapped_language(language_code, region)
 
 
 class MediaTemplateChoices(models.TextChoices):
