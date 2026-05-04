@@ -439,10 +439,16 @@ def update_story_pdf(access_token, session, flow, is_edit_story=False):
         print("profile: ", profile)
         print("story: ", story.title)
         print("story format: ", story.formatted_content)
-        if isinstance(flow, str):
-            html_content = get_story_html(story=story, profile=profile, flow=flow)
+        language = chatsession.get("language", StoryLanguageChoices.ENGLISH)
+        flow_obj = Flow.objects.filter(flow_route=flow).first()
+        has_pdf_template = flow_obj and PDFTemplates.objects.filter(flow=flow_obj).exists()
+        if has_pdf_template:
+            html_content = get_html_from_template(
+                story=story, profile=profile, flow=flow,
+                auth=(profile is not None), language=language
+            )
         else:
-            html_content = get_html_from_template(story=story, profile=profile, flow=flow, language=chatsession.get("language", StoryLanguageChoices.ENGLISH))
+            html_content = get_story_html(story=story, profile=profile, flow=flow)
 
         pdf_generated = generate_pdf_with_gotenberg(html_content)
         # print("pdf_generated: ", pdf_generated)
@@ -461,11 +467,11 @@ def update_story_pdf(access_token, session, flow, is_edit_story=False):
         story_media.file.save(pdf_file_name, pdf_content)
         story_media.include_in_story = False
         story_media.save()
-        print("StoryMedia updated and saved successfully.")
-        print(f"Updated name: {story_media.name}")
-        print(f"Updated file path: {story_media.file}")
-        print(f"Include in story: {story_media.include_in_story}")
-        print(f"Public url: {story_media.get_public_url()}")
+        logger.info("StoryMedia updated and saved successfully.")
+        logger.info(f"Updated name: {story_media.name}")
+        logger.info(f"Updated file path: {story_media.file}")
+        logger.info(f"Include in story: {story_media.include_in_story}")
+        logger.info(f"Public url: {story_media.get_public_url()}")
         chat_session = ChatSession.objects.get(session=session)
         project_id = chat_session.project_id
 

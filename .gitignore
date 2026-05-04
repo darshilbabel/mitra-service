@@ -13,5 +13,10 @@ report-task.txt
 
 .coverage
 
+
+.deepeval/
+graphify-out/
+config/qa-dev-prod-mitra-bucket.json
 .vscode/
 .claude/
+.venv/

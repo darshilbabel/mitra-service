@@ -427,6 +427,7 @@ LOGGING = {
             'interval': 1,        # 1 day interval
             'backupCount': 30,     # Keep 30 backup copies
             'formatter': 'verbose',
+            "delay": False,
         },
         'info_file': {
             'level': 'INFO',
@@ -436,6 +437,7 @@ LOGGING = {
             'interval': 1,        # 1 day interval
             'backupCount': 30,     # Keep 30 backup copies
             'formatter': 'verbose',
+            "delay": False,
         },
         'warning_file': {
             'level': 'WARNING',
@@ -445,6 +447,7 @@ LOGGING = {
             'interval': 1,        # 1 day interval
             'backupCount': 30,     # Keep 30 backup copies
             'formatter': 'verbose',
+            "delay": False,
         },
         'error_file': {
             'level': 'ERROR',
@@ -454,6 +457,7 @@ LOGGING = {
             'interval': 1,        # 1 day interval
             'backupCount': 30,     # Keep 30 backup copies
             'formatter': 'verbose',
+            "delay": False,
         },
     },
     'loggers': {
@@ -483,5 +487,9 @@ CRONJOBS = [
      ('0 12 * * *', 'chatbot.cron_tasks.delhi_shiksha_samvad.story_creation.create_story',
     '>> /tmp/delhi_shiksha_samvad_story_creation.log 2>&1'),
     ('0 12 * * *', 'chatbot.cron_tasks.shiksha_samvad.story_creation.create_story',
-    '>> /tmp/shiksha_samvad_story_creation.log 2>&1')
+    '>> /tmp/shiksha_samvad_story_creation.log 2>&1'),
+    ('0 */2 * * *', 'chatbot.cron_tasks.telangana_ptm_pilot.school_classification.main',
+    '>> /tmp/telangana_ptm_pilot_school_classification.log 2>&1'),
+    ('15 */2 * * *', 'chatbot.cron_tasks.telangana_ptm_pilot.metrics_extraction.extract_metrics',
+    '>> /tmp/telangana_ptm_pilot_metrics_extraction.log 2>&1'),
 ]

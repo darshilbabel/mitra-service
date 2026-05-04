@@ -43,6 +43,7 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
 
     async def receive(self, text_data):
         try:
+            logger.info(f"Received text data via common websocket: {text_data}")
             text_data_json = json.loads(text_data)
             message_type = text_data_json.get('type', None)
             company_chat_status = None

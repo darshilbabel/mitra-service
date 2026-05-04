@@ -1,10 +1,24 @@
 import traceback
+import threading
 from google.cloud import translate
 import logging
 from google.oauth2 import service_account
 from django.conf import settings
 
 logger = logging.getLogger('django')
+
+_client_lock = threading.Lock()
+_translation_client = None
+
+
+def _get_client():
+    global _translation_client
+    if _translation_client is None:
+        with _client_lock:
+            if _translation_client is None:
+                credentials = service_account.Credentials.from_service_account_file(settings.SECRETS_JSON_PATH)
+                _translation_client = translate.TranslationServiceClient(credentials=credentials)
+    return _translation_client
 
 
 def translate_text(
@@ -19,8 +33,7 @@ def translate_text(
 
         other_params = voice_provider.other_params if voice_provider.other_params else {}
 
-        credentials = service_account.Credentials.from_service_account_file(settings.SECRETS_JSON_PATH)
-        client = translate.TranslationServiceClient(credentials=credentials)
+        client = _get_client()
 
         location = other_params.get("location", "global")
         parent = f"projects/{project_id}/locations/{location}"

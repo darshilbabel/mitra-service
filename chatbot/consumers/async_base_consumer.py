@@ -23,12 +23,12 @@ class AsyncBaseConsumer(AsyncWebsocketConsumer):
 
             if session_id:
                 await self.save_chat_session(session_id)
-                if hasattr(self, 'profile_id') and hasattr(self, 'route'):
+                if getattr(self, 'profile_id', None) and getattr(self, 'bot_route', None):
                     company_chat_status = await self.determine_company_chat_status_async(
                         session_id=session_id,
                         profile_id=self.profile_id,
                         is_disconnected=True,
-                        route='/'
+                        route=self.bot_route
                     )
                     await self.update_last_chat_status_async(chat_status=company_chat_status)
         except Exception as e:
@@ -36,9 +36,6 @@ class AsyncBaseConsumer(AsyncWebsocketConsumer):
             logger.error('Receive Error: %s', e, exc_info=True)
 
         finally:
-            # Always close the connection
-            logger.info('Disconnect stack trace: %s', {json.dumps(traceback.format_stack())}, exc_info=True)
-
             await self.close()
 
     async def receive(self, text_data):

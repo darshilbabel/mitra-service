@@ -40,6 +40,9 @@ class ChatSession(models.Model):
         except CompanyBot.DoesNotExist:
             company_bot = None
 
+        if not company_bot:
+            return
+
         messages = get_guided_chat(
             company_bot=company_bot, company_chats=company_chats
         )
