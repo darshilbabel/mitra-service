@@ -81,7 +81,8 @@ class LLMModel(models.TextChoices):
     GPT5_2 = 'gpt-5.2', _('GPT_5_2')
     GPT5_2_PRO = 'gpt-5.2-pro', _('GPT_5_2_PRO')
     GPT5_MINI = 'gpt-5-mini', _('GPT_5_MINI')
-
+    CLAUDE_HAIKU_4_5 = 'us.anthropic.claude-haiku-4-5-20251001-v1:0', _('CLAUDE_HAIKU_4_5')
+    CLAUDE_SONNET_4_5 = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', _('CLAUDE_SONNET_4_5')
 
 class EntityStatus(models.TextChoices):
     """

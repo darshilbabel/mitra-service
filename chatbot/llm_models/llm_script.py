@@ -26,6 +26,18 @@ AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 llm_retry_number = int(os.getenv('LLM_RETRY_NUMBER'))
 
 
+def get_custom_model(company_bot):
+    """Return company_bot.other_params['custom_model'] if set, else None."""
+    if not company_bot:
+        return None
+    other_params = company_bot.get('other_params') if isinstance(company_bot, dict) else getattr(
+        company_bot, 'other_params', None
+    )
+    if isinstance(other_params, str):
+        other_params = json.loads(other_params)
+    return other_params.get('custom_model') if other_params else None
+
+
 def handle_llama_model(
         messages, max_token, model_name=None, is_json_format=True, temperature=None, top_p=None, seed=None, n=None,
         stream=False, url_to_use=None
@@ -101,7 +113,10 @@ def handle_openai_model(
         else:
             client = OpenAI(api_key=client_api_key)
 
-        if model_name:
+        custom_model = get_custom_model(company_bot)
+        if custom_model:
+            model_to_use = custom_model
+        elif model_name:
             model_to_use = model_name
         elif company_bot:
             model_to_use = company_bot.llm_model
@@ -121,7 +136,7 @@ def handle_openai_model(
             LLMModel.GPT5_2,
         }
         if max_token:
-            if company_bot.llm_model in token_limit_models:
+            if model_to_use in token_limit_models:
                 request_data["max_completion_tokens"] = max_token
             else:
                 request_data["max_tokens"]= max_token
@@ -135,7 +150,7 @@ def handle_openai_model(
             request_data["tools"]= tools
             if tool_choice:
                 request_data["tool_choice"]= tool_choice
-        if top_p is not None and company_bot.llm_model not in token_limit_models:
+        if top_p is not None and model_to_use not in token_limit_models:
             request_data['top_p'] = top_p
         print("request_data: ", request_data)
         response = client.chat.completions.create(**request_data)
@@ -243,7 +258,10 @@ def handle_bedrock_model(
         config=boto_config
     )
     print("aws_key used: ", aws_key if aws_key else AWS_KEY)
-    if model_name:
+    custom_model = get_custom_model(company_bot)
+    if custom_model:
+        model_id = custom_model
+    elif model_name:
         model_id = model_name
     else:
         model_id = 'meta.llama3-1-8b-instruct-v1:0'
@@ -621,7 +639,10 @@ def handle_openai_response_api(
 
     client = OpenAI(api_key=client_api_key)
 
-    if model_name:
+    custom_model = get_custom_model(company_bot)
+    if custom_model:
+        model_to_use = custom_model
+    elif model_name:
         model_to_use = model_name
     elif company_bot:
         model_to_use = company_bot.llm_model
