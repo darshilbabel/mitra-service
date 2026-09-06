@@ -21,7 +21,7 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CODE_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-LOGGING_DIR = CODE_BASE_DIR + '/logs'
+LOGGING_DIR = os.environ.get("LOGGING_DIR", CODE_BASE_DIR + '/logs')
 
 def load_secrets():
     paths_to_try = [
