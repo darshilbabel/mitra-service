@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib import admin
 from django.db.models import Q
 from pydantic import ValidationError
@@ -14,10 +16,13 @@ from chatbot.resources.company_resource import ChatSessionResource
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.urls import path
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, HttpResponseNotAllowed
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
+from inline_actions.admin import InlineActionsMixin, InlineActionsModelAdminMixin
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
+
+logger = logging.getLogger(__name__)
 
 
 class CompanyBotProgramMappingInline(admin.TabularInline):
@@ -32,7 +37,7 @@ class CompanyBotProgramMappingInline(admin.TabularInline):
     fields = ('state', 'program', 'leader_category', 'is_active')
 
 
-class CompanyStateMachineAdmin(admin.TabularInline):
+class CompanyStateMachineAdmin(InlineActionsMixin, admin.TabularInline):
     model = CompanyStateMachine
     fk_name = 'company_bot'
     extra = 1
@@ -46,10 +51,61 @@ class CompanyStateMachineAdmin(admin.TabularInline):
         'skip_to_step', 'translations'
     )
     exclude = ('type',)  # ✅ hide type
+    inline_actions = ['generate_translation', 'generate_audio', 'revoke_audio']
+
+    class Media:
+        js = ('chatbot/admin/js/confirm_revoke_audio.js',)
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.order_by('step')
+
+    def generate_translation(self, request, obj, parent_obj=None):
+        """Inline action: async-triggers translation gen for this row only."""
+        from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
+
+        generate_state_machine_translations.delay(parent_obj.id, state_machine_id=obj.pk)
+        messages.success(
+            request, f"Translation generation started for step '{obj.name}'. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section."
+        )
+
+    generate_translation.short_description = "Generate Translations"
+
+    def generate_audio(self, request, obj, parent_obj=None):
+        """Inline action: async-triggers audio gen for this row only."""
+        from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_audio
+
+        generate_state_machine_audio.delay(parent_obj.id, state_machine_id=obj.pk)
+        messages.success(
+            request, f"Audio generation started for step '{obj.name}'. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section."
+        )
+
+    generate_audio.short_description = "Generate Audio"
+
+    def revoke_audio(self, request, obj, parent_obj=None):
+        """Inline action: deletes all cached audio_s3 files for this row from S3, strips them from translations."""
+        from chatbot.celery_tasks.non_llm_tasks import revoke_state_machine_audio
+
+        removed_langs, failed_langs = revoke_state_machine_audio(obj.pk)
+
+        if not removed_langs and not failed_langs:
+            messages.info(request, f"No cached audio found for step '{obj.name}'.")
+        else:
+            if removed_langs:
+                messages.success(
+                    request, f"Revoked audio for step '{obj.name}': {', '.join(removed_langs)}."
+                )
+            if failed_langs:
+                messages.error(
+                    request,
+                    f"Failed to delete S3 audio for step '{obj.name}': {', '.join(failed_langs)}. "
+                    "Left untouched, retry revoke.",
+                )
+
+    revoke_audio.short_description = "Revoke Audio"
+
+    def get_revoke_audio_css(self, obj=None):
+        return "confirm-revoke-audio"
 
 
 class VoiceProviderAdmin(admin.TabularInline):
@@ -89,7 +145,7 @@ class CompanyAdmin(admin.ModelAdmin):
 
 
 @admin.register(CompanyBot)
-class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
+class CompanyBotAdmin(InlineActionsModelAdminMixin, BatchUploadMixin, SimpleHistoryAdmin):
 
     list_display = ('name', 'company', 'created_at')
     list_filter = (
@@ -104,6 +160,7 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
     ordering = ('-created_at',)
     inlines = [VoiceProviderAdmin, CompanyBotProgramMappingInline]
     actions = ['duplicate_bot', 'export_selected_bots']
+    inline_actions = None  # only the CompanyStateMachine inline uses inline-actions, not this changelist
 
     enable_batch_upload = True
     batch_load_foreign_keys = True
@@ -136,15 +193,22 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
 
     def generate_translations_view(self, request, bot_id):
         """Admin action: async-triggers translation gen for bot, redirects back to change page."""
-        from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
+        try:
+        # if request.method != "POST":
+        #     return HttpResponseNotAllowed(["POST"])
 
-        generate_state_machine_translations.delay(bot_id)
-        self.message_user(
-            request, "Translation generation started in background.", messages.SUCCESS
-        )
-        return HttpResponseRedirect(
-            reverse("admin:chatbot_companybot_change", args=[bot_id])
-        )
+            from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
+
+            logger.info("Generate translations triggered for company_bot_id=%s", bot_id)
+            generate_state_machine_translations.delay(company_bot_id=bot_id, generate_audio=True)
+            self.message_user(
+                request, "Translation generation started in background. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section.", messages.SUCCESS
+            )
+
+            return HttpResponseRedirect(reverse("admin:chatbot_companybot_change", args=[bot_id]))
+
+        except Exception as e:
+            logger.error("Error while generating Translations: %s", e, exc_info=True)
 
     def export_view(self, request):
         """Handle export requests"""
@@ -266,6 +330,16 @@ class CompanyBotAdmin(BatchUploadMixin, SimpleHistoryAdmin):
         if obj and obj.bot_type == CompanyBotTypeChoices.STATE_MACHINE:
             return [VoiceProviderAdmin, CompanyStateMachineAdmin, CompanyBotProgramMappingInline]
         return [VoiceProviderAdmin, CompanyBotProgramMappingInline]
+
+    def get_inline_instances(self, request, obj=None):
+        # django-admin-inlines' inline-action POST handler calls this without `obj`,
+        # which would make get_inlines() drop CompanyStateMachineAdmin for STATE_MACHINE
+        # bots and crash resolving the action. Recover obj from the URL when missing.
+        if obj is None and request.resolver_match:
+            object_id = request.resolver_match.kwargs.get("object_id")
+            if object_id:
+                obj = self.model.objects.filter(pk=object_id).first()
+        return super().get_inline_instances(request, obj)
 
     # Sync Google glossary for TextToText voice providers after inline save
     def duplicate_bot(self, request, queryset):
@@ -558,7 +632,7 @@ class FlowAdmin(SimpleHistoryAdmin):
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
     raw_id_fields = ('bot', 'story_bot', 'parent_flow', 'default_flow', 'image_config', 'story_validation_bot')
-    
+
     fieldsets = (
         ('Basic Information', {
             'fields': ('flow_name', 'flow_route', 'languages')

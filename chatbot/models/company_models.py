@@ -376,14 +376,14 @@ class CompanyStateMachine(models.Model):
         null=True, blank=True,
         help_text="If set, the flow will skip directly to this step number when skip conditions are met."
     )
-    
+
     operation_type = models.CharField(
         max_length=20,
         choices=OperationTypeChoices.choices,
         default=OperationTypeChoices.LLM,
         help_text="Choose whether this state uses LLM or non-LLM processing."
     )
-    
+
     skip_if_authenticated = models.BooleanField(
         default=False,
         help_text="If True, this state will be skipped for authenticated users."
@@ -452,12 +452,29 @@ class CompanyStateMachine(models.Model):
             self.postprocess_output_mode = PostProcessOutputMode.NONE
 
     def save(self, *args, **kwargs):
+        langs_to_regenerate = []
         if self.pk:
-            old = CompanyStateMachine.objects.filter(pk=self.pk).values('bot_question').first()
+            old = CompanyStateMachine.objects.filter(pk=self.pk).values('bot_question', 'translations').first()
+            self.full_clean()
+            if self.operation_type == OperationTypeChoices.LLM or self.step == 1:
+                super().save(*args, **kwargs)
+                return
+
             if old and old['bot_question'] != self.bot_question:
+                if old['translations'] and self.bot_question:
+                    langs_to_regenerate = list(old['translations'].keys())
                 self.translations = None
+
         self.full_clean()
         super().save(*args, **kwargs)
+
+        if langs_to_regenerate:
+            from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
+            company_bot_id = self.company_bot_id
+            state_machine_id = self.pk
+            generate_state_machine_translations.delay(
+                    company_bot_id, state_machine_id=state_machine_id, language=None, generate_audio=True
+            )
 
     def __str__(self):
         return f"{self.company_bot.name} - {self.name}"
@@ -768,4 +785,3 @@ class CompanyBotProgramMapping(models.Model):
             models.Index(fields=['leader_category']),
             models.Index(fields=['is_active']),
         ]
-
