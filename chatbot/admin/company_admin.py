@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib import admin
 from django.db.models import Q
 from pydantic import ValidationError
@@ -19,6 +21,8 @@ from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
 from inline_actions.admin import InlineActionsMixin, InlineActionsModelAdminMixin
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
+
+logger = logging.getLogger(__name__)
 
 
 class CompanyBotProgramMappingInline(admin.TabularInline):
@@ -73,7 +77,7 @@ class CompanyStateMachineAdmin(InlineActionsMixin, admin.TabularInline):
 
         generate_state_machine_audio.delay(parent_obj.id, state_machine_id=obj.pk)
         messages.success(
-            request, f"Audio generation started for step '{obj.name}'."
+            request, f"Audio generation started for step '{obj.name}'. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section."
         )
 
     generate_audio.short_description = "Generate Audio"
@@ -194,12 +198,10 @@ class CompanyBotAdmin(InlineActionsModelAdminMixin, BatchUploadMixin, SimpleHist
 
         from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
 
+        logger.info("Generate translations triggered for company_bot_id=%s", bot_id)
         generate_state_machine_translations.delay(company_bot_id=bot_id, generate_audio=True)
         self.message_user(
             request, "Translation generation started in background. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section.", messages.SUCCESS
-        )
-        return HttpResponseRedirect(
-            reverse("admin:chatbot_companybot_change", args=[bot_id])
         )
 
     def export_view(self, request):
