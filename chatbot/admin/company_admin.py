@@ -193,16 +193,22 @@ class CompanyBotAdmin(InlineActionsModelAdminMixin, BatchUploadMixin, SimpleHist
 
     def generate_translations_view(self, request, bot_id):
         """Admin action: async-triggers translation gen for bot, redirects back to change page."""
-        if request.method != "POST":
-            return HttpResponseNotAllowed(["POST"])
+        try:
+        # if request.method != "POST":
+        #     return HttpResponseNotAllowed(["POST"])
 
-        from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
+            from chatbot.celery_tasks.non_llm_tasks import generate_state_machine_translations
 
-        logger.info("Generate translations triggered for company_bot_id=%s", bot_id)
-        generate_state_machine_translations.delay(company_bot_id=bot_id, generate_audio=True)
-        self.message_user(
-            request, "Translation generation started in background. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section.", messages.SUCCESS
-        )
+            logger.info("Generate translations triggered for company_bot_id=%s", bot_id)
+            generate_state_machine_translations.delay(company_bot_id=bot_id, generate_audio=True)
+            self.message_user(
+                request, "Translation generation started in background. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section.", messages.SUCCESS
+            )
+
+            return HttpResponseRedirect(reverse("admin:chatbot_companybot_change", args=[bot_id]))
+
+        except Exception as e:
+            logger.error("Error while generating Translations: %s", e, exc_info=True)
 
     def export_view(self, request):
         """Handle export requests"""

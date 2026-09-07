@@ -1,8 +1,5 @@
 {% extends "admin/change_form.html" %} {% load i18n %} {% block object-tools-items %} {{ block.super }} {% if generate_translations_url %}
 <li style="margin-top: 1rem;">
-  <form action="{{ generate_translations_url }}" method="post" style="display: inline;">
-    {% csrf_token %}
-    <button type="submit" class="historylink" style="background: #417690; color: #fff; padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: inherit;"> {% trans "Generate Translations" %} </button>
-  </form>
+    <a href="{{ generate_translations_url }}" class="historylink" style="background: #417690; color: #fff; padding: 6px 12px; border-radius: 4px; text-decoration: none; border: 5px 0"> {% trans "Generate Translations" %} </a>
 </li>
 {% endif %} {% endblock %}
