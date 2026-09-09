@@ -202,7 +202,7 @@
         </svg>
         <div>
             <p>Bulk Metadata Correction</p>
-            <p>Upload a CSV file to fix missing or inaccurate metadata (State, District, Block, Location, Role, Leader Category, Theme) for unmapped stories.
+            <p>Upload a CSV file to fix missing or inaccurate State/District metadata for unmapped stories.
                Corrections permanently override previous AI-generated values and instantly cascade across all live dashboard metrics.</p>
         </div>
     </div>
@@ -212,11 +212,11 @@
       <details class="schema-details">
         <summary class="schema-summary">
             <span class="schema-summary-left"><span class="schema-caret">▶</span> View CSV column reference</span>
-            <span class="schema-summary-hint">id required · others optional ▾</span>
+            <span class="schema-summary-hint">all 3 columns required ▾</span>
         </summary>
         <p style="font-size:12px;color:#666;margin:12px 0 12px 0;">
-            Columns appear in export order. Only <code>id</code> is mandatory.
-            All other columns are read from the CSV if present and ignored if absent.
+            CSV must have exactly 3 columns: <code>id</code>, <code>State</code>, <code>District</code>.
+            For each <code>id</code>, the matching Story's <code>State</code> and <code>District</code> get updated.
         </p>
         <table class="schema-table">
             <thead>
@@ -228,22 +228,11 @@
             </thead>
             <tbody>
                 <tr><td><code>id</code></td><td><span class="badge-required">Required</span></td><td>Story integer ID — anchor key used to find the record</td></tr>
-                <tr><td><code>session</code></td><td><span class="badge-readonly">Read-only</span></td><td>Session string — used as fallback lookup if id fails; do not change</td></tr>
-                <tr><td><code>state</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update state — must be one of the 29 recognised states of India</td></tr>
-                <tr><td><code>district</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update district — accepted as-is, no validation</td></tr>
-                <tr><td><code>block</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update block</td></tr>
-                <tr><td><code>location</code></td><td><span class="badge-editable">Editable</span></td><td>Free-text location string (separate from state/district fields)</td></tr>
-                <tr><td><code>role</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update the reporter's role — must match a Role in master data</td></tr>
-                <tr><td><code>leader_category</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update leader category — must match a Leader Category in master data</td></tr>
-                <tr><td><code>theme_name</code></td><td><span class="badge-editable">Editable</span></td><td>Edit this column to update the theme name</td></tr>
-                <tr><td><code>action</code></td><td><span class="badge-editable">Optional</span></td><td><code>update</code> or <code>ignore</code> — if column absent or blank, the row is treated as <code>update</code></td></tr>
-                <tr><td>all other columns</td><td><span class="badge-readonly">Ignored</span></td><td>title, content, and any column not listed above are read but never written back</td></tr>
+                <tr><td><code>State</code></td><td><span class="badge-required">Required</span></td><td>Must be one of the 29 recognised states of India</td></tr>
+                <tr><td><code>District</code></td><td><span class="badge-required">Required</span></td><td>Must belong to the given <code>State</code> in master data</td></tr>
             </tbody>
         </table>
       </details>
-        <p style="font-size:12px;color:#e65100;margin:12px 0 0 0;font-weight:600;">
-            ⚠️ To update state/district, edit the <code>state</code> and <code>district</code> columns (last two columns in the export CSV) — not the <code>location</code> column.
-        </p>
     </div>
 
     <!-- Inline error -->

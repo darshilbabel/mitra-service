@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from collections import Counter
 
 from django.contrib.admin.views.decorators import staff_member_required
@@ -8,71 +9,108 @@ from django.utils.decorators import method_decorator
 from django.views.generic import TemplateView
 
 from chatbot.constants import api_responses
-from chatbot.constants.india_states import get_canonical_state
 
-CSV_REQUIRED_COLS = {"id"}   # only "id" column is mandatory
+CSV_REQUIRED_COLS = {"id", "State", "District"}
 
 ERROR_REASON_COL = "error_reason"
 
-MAPPING_REQUIRED_FIELDS = {"state", "district", "leader_category"}
+MAPPING_REQUIRED_FIELDS = {"state", "district"}
 
-def _get_valid_roles():
-    # Roles come from the Role master table. ProfileType (USER/MODERATOR) describes admin
-    # access levels, not reporter roles, so validating against it rejected every real
-    # value a correction CSV could carry.
-    from chatbot.models.story_models import Role
-    return {n.strip().lower() for n in Role.objects.values_list("name", flat=True) if n}
+STATE_DISTRICT_BOT_ROUTE = "/state-classification-guest-discussion"
 
 
-def _get_valid_leader_categories():
-    # Read from the LeaderCategory master table rather than scraping distinct strings out
-    # of Story.other_params, which only ever knew about values already in use.
-    from chatbot.models.story_models import LeaderCategory
-    return {n.strip().lower() for n in LeaderCategory.objects.values_list("name", flat=True) if n}
+def _load_state_district_mapping():
+    """
+    Fetch and index the state/district mapping from the CompanyBot whose route is
+    STATE_DISTRICT_BOT_ROUTE. Raises ValueError with a user-facing message on any
+    failure, so the caller can hard-fail the whole upload before touching any row.
+    """
+    from chatbot.models.company_models import CompanyBot
 
+    try:
+        bot = CompanyBot.objects.get(route=STATE_DISTRICT_BOT_ROUTE)
+    except CompanyBot.DoesNotExist:
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_BOT_NOT_FOUND)
+
+    try:
+        raw = bot.dynamic_context
+        data = raw if isinstance(raw, dict) else json.loads(raw)
+        states = data["states"]
+    except (TypeError, ValueError, KeyError):
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_MAPPING_INVALID)
+
+    state_names = set()
+    state_districts = {}
+    district_index = {}
+    for state in states:
+        state_name = state["name"].strip()
+        state_names.add(state_name)
+        district_names = {d["name"].strip() for d in state.get("districts", [])}
+        state_districts[state_name] = district_names
+        for district_name in district_names:
+            district_index.setdefault(district_name, []).append(state_name)
+
+    return {
+        "state_names": state_names,
+        "state_districts": state_districts,
+        "district_index": district_index,
+    }
 
 
 def _extract_fields(row: dict) -> dict:
     return {
-        "id":              (row.get("id") or "").strip(),
-        "session":         (row.get("session") or "").strip(),
-        "state":           (row.get("state") or "").strip(),
-        "district":        (row.get("district") or "").strip(),
-        "block":           (row.get("block") or "").strip(),
-        "location":        (row.get("location") or "").strip(),
-        "role":            (row.get("role") or "").strip(),
-        "leader_category": (row.get("leader_category") or "").strip(),
-        "theme_name":      (row.get("theme_name") or "").strip(),
-        # Absent, empty and whitespace-only all mean "no action given", which defaults to
-        # update. Without the trailing fallback a cell of "   " would strip to "" and be
-        # rejected as an unsupported action.
-        "action":          ((row.get("action") or "").strip().lower() or "update"),
+        "id":       (row.get("id") or "").strip(),
+        "state":    (row.get("State") or "").strip(),
+        "district": (row.get("District") or "").strip(),
     }
 
 
-
-def _validate_row(fields: dict, roles: set, leader_categories: set) -> list:
+def _validate_row(fields: dict, mapping: dict) -> list:
     errors = []
 
     state_val = fields["state"]
-    role_val  = fields["role"]
-    lc_val    = fields["leader_category"]
+    district_val = fields["district"]
+
+    if not state_val and not district_val:
+        return errors
+
+    if state_val and state_val not in mapping["state_names"]:
+        errors.append(api_responses.CSV_ROW_UNKNOWN_STATE_TEMPLATE.format(state=state_val))
+        return errors
+
+    if not district_val:
+        return errors
 
     if state_val:
-        if get_canonical_state(state_val) is None:
+        if district_val not in mapping["state_districts"].get(state_val, set()):
+            actual_states = mapping["district_index"].get(district_val)
+            if actual_states:
+                errors.append(
+                    api_responses.CSV_ROW_DISTRICT_WRONG_STATE_TEMPLATE.format(
+                        district=district_val,
+                        actual_states=", ".join(sorted(actual_states)),
+                        state=state_val,
+                    )
+                )
+            else:
+                errors.append(
+                    api_responses.CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE.format(district=district_val)
+                )
+    else:
+        candidate_states = mapping["district_index"].get(district_val)
+        if not candidate_states:
             errors.append(
-                api_responses.CSV_ROW_INVALID_STATE_TEMPLATE.format(state=state_val)
+                api_responses.CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE.format(district=district_val)
             )
-
-    if role_val and roles and role_val.lower() not in roles:
-        errors.append(api_responses.CSV_ROW_UNKNOWN_ROLE_TEMPLATE.format(role=role_val))
-
-    if lc_val and leader_categories and lc_val.lower() not in leader_categories:
-        errors.append(
-            api_responses.CSV_ROW_UNKNOWN_LEADER_CATEGORY_TEMPLATE.format(
-                leader_category=lc_val
+        elif len(candidate_states) > 1:
+            errors.append(
+                api_responses.CSV_ROW_AMBIGUOUS_DISTRICT_TEMPLATE.format(
+                    district=district_val,
+                    candidate_states=", ".join(sorted(candidate_states)),
+                )
             )
-        )
+        else:
+            fields["state"] = candidate_states[0]
 
     return errors
 
@@ -81,50 +119,12 @@ def _apply_to_story(story, fields: dict) -> bool:
     """Apply only the values that differ. Return True if anything changed."""
     changed = False
 
-    if fields["state"]:
-        canonical = get_canonical_state(fields["state"])
-        new_state = canonical if canonical else fields["state"]
-        if story.state != new_state:
-            story.state = new_state
-            changed = True
+    if fields["state"] and story.state != fields["state"]:
+        story.state = fields["state"]
+        changed = True
     if fields["district"] and story.district != fields["district"]:
         story.district = fields["district"]
         changed = True
-    if fields["block"] and story.block != fields["block"]:
-        story.block = fields["block"]
-        changed = True
-    if fields["location"] and story.location != fields["location"]:
-        story.location = fields["location"]
-        changed = True
-
-    op = story.other_params or {}
-    if fields["role"] and op.get("role") != fields["role"]:
-        op["role"] = fields["role"]
-        changed = True
-    if fields["leader_category"] and op.get("leader_category") != fields["leader_category"]:
-        op["leader_category"] = fields["leader_category"]
-        changed = True
-
-    # Also resolve onto the model's foreign keys, which is what the dashboard reads.
-    # The other_params copies above are kept as-is: _update_mapping_stage() derives the
-    # story stage from op['leader_category'], so dropping them would change that result.
-    from chatbot.models.story_models import LeaderCategory, Role
-
-    if fields["role"]:
-        role_obj = Role.objects.filter(name__iexact=fields["role"]).first()
-        if role_obj and story.role_id != role_obj.id:
-            story.role = role_obj
-            changed = True
-    if fields["leader_category"]:
-        lc_obj = LeaderCategory.objects.filter(name__iexact=fields["leader_category"]).first()
-        if lc_obj and story.leader_category_id != lc_obj.id:
-            story.leader_category = lc_obj
-            changed = True
-
-    if fields["theme_name"] and op.get("theme_name") != fields["theme_name"]:
-        op["theme_name"] = fields["theme_name"]
-        changed = True
-    story.other_params = op
 
     if changed:
         _update_mapping_stage(story)
@@ -134,14 +134,8 @@ def _apply_to_story(story, fields: dict) -> bool:
 
 def _update_mapping_stage(story):
     from chatbot.models.enums import StoryStatusChoices
-    op = story.other_params or {}
 
-    def _has(f):
-        if f in ("state", "district", "block", "location"):
-            return bool(getattr(story, f, None))
-        return bool(op.get(f))
-
-    fully_mapped = all(_has(f) for f in MAPPING_REQUIRED_FIELDS)
+    fully_mapped = all(getattr(story, f, None) for f in MAPPING_REQUIRED_FIELDS)
     story.stage = StoryStatusChoices.COMPLETED if fully_mapped else StoryStatusChoices.PENDING
 
 
@@ -225,7 +219,9 @@ class CsvCorrectionView(TemplateView):
         if missing:
             return JsonResponse(
                 {"success": False,
-                 "error": api_responses.CSV_MISSING_ID_COLUMN},
+                 "error": api_responses.CSV_MISSING_COLUMNS_TEMPLATE.format(
+                     columns=", ".join(sorted(missing))
+                 )},
                 status=400,
             )
 
@@ -247,8 +243,10 @@ class CsvCorrectionView(TemplateView):
                 status=400,
             )
 
-        roles             = _get_valid_roles()
-        leader_categories = _get_valid_leader_categories()
+        try:
+            mapping = _load_state_district_mapping()
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
 
         from chatbot.models.story_models import Story
 
@@ -258,17 +256,8 @@ class CsvCorrectionView(TemplateView):
         for row in rows:
             fields = _extract_fields(row)
 
-            if fields["action"] == "ignore":
-                processed += 1
-                continue
-            if fields["action"] != "update":
-                # A typo such as 'updtae' used to be skipped silently - not counted, not
-                # rejected - so the upload reported success while the correction was
-                # never applied.
-                processed += 1
-                rejected_rows.append(
-                    {"row": row, "error": api_responses.CSV_ROW_INVALID_ACTION}
-                )
+            if not fields["state"] and not fields["district"]:
+                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_STATE_DISTRICT_BLANK})
                 continue
 
             processed += 1
@@ -278,29 +267,21 @@ class CsvCorrectionView(TemplateView):
                 rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_ID_EMPTY})
                 continue
 
-            errors = _validate_row(fields, roles, leader_categories)
+            errors = _validate_row(fields, mapping)
             if errors:
                 rejected_rows.append({"row": row, "error": "; ".join(errors)})
                 continue
 
-            story = None
             try:
                 story = Story.objects.get(pk=int(raw_id))
             except (ValueError, TypeError, Story.DoesNotExist):
-                pass
-
-            if story is None:
-                session_val = fields["session"] or raw_id
-                try:
-                    story = Story.objects.get(session=session_val)
-                except Story.DoesNotExist:
-                    rejected_rows.append(
-                        {"row": row, "error": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id)}
-                    )
-                    continue
-                except Exception as exc:
-                    rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc)})
-                    continue
+                rejected_rows.append(
+                    {"row": row, "error": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id)}
+                )
+                continue
+            except Exception as exc:
+                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc)})
+                continue
 
             if not _apply_to_story(story, fields):
                 unchanged += 1

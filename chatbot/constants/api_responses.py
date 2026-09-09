@@ -19,7 +19,9 @@ CSV_NO_PERMISSION = "You do not have permission to change stories."
 CSV_NO_FILE_UPLOADED = "No file uploaded."
 CSV_INVALID_FILE_FORMAT = "Invalid file format. Please upload a .csv file."
 CSV_EMPTY_FILE = "CSV file is empty."
-CSV_MISSING_ID_COLUMN = "Missing required column: 'id'. The CSV must have an 'id' column."
+CSV_MISSING_COLUMNS_TEMPLATE = (
+    "Missing required column(s): {columns}. The CSV must have these columns."
+)
 
 CSV_PARSE_FAILED_TEMPLATE = "Could not parse CSV: {error}"
 CSV_DUPLICATE_IDS_TEMPLATE = (
@@ -30,21 +32,27 @@ CSV_DUPLICATE_IDS_TEMPLATE = (
 # -------------- CSV CORRECTION: ROW VALIDATION ------------------
 
 CSV_ROW_ID_EMPTY = "id is empty"
-CSV_ROW_INVALID_ACTION = "action must be 'update' or 'ignore'"
+CSV_ROW_STATE_DISTRICT_BLANK = "Row not processed: State and District both blank"
 
-CSV_ROW_INVALID_STATE_TEMPLATE = (
-    "Invalid State '{state}' — not in the 29 recognised states of India"
+CSV_ROW_UNKNOWN_STATE_TEMPLATE = "Unknown State '{state}'"
+CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE = "Unknown District '{district}'"
+CSV_ROW_DISTRICT_WRONG_STATE_TEMPLATE = (
+    "District '{district}' belongs to {actual_states}, not '{state}'"
 )
-CSV_ROW_UNKNOWN_ROLE_TEMPLATE = (
-    "Role '{role}' does not exist in master system access configurations"
-)
-CSV_ROW_UNKNOWN_LEADER_CATEGORY_TEMPLATE = (
-    "Leader Category '{leader_category}' does not exist in master system access "
-    "configurations"
+CSV_ROW_AMBIGUOUS_DISTRICT_TEMPLATE = (
+    "District '{district}' is ambiguous — found in states: {candidate_states}. "
+    "Specify State to disambiguate."
 )
 CSV_ROW_STORY_NOT_FOUND_TEMPLATE = "No Story found with id='{story_id}'"
 CSV_ROW_DB_ERROR_TEMPLATE = "DB error: {error}"
 CSV_ROW_SAVE_FAILED_TEMPLATE = "Save failed: {error}"
+
+CSV_STATE_DISTRICT_BOT_NOT_FOUND = (
+    "CompanyBot with route '/state-classification-guest-discussion' does not exist."
+)
+CSV_STATE_DISTRICT_MAPPING_INVALID = (
+    "State/District mapping in CompanyBot dynamic_context is missing or invalid JSON."
+)
 
 
 # -------------- MODEL VALIDATION ------------------
