@@ -32,7 +32,7 @@ CSV_DUPLICATE_IDS_TEMPLATE = (
 # -------------- CSV CORRECTION: ROW VALIDATION ------------------
 
 CSV_ROW_ID_EMPTY = "id is empty"
-CSV_ROW_STATE_DISTRICT_BLANK = "Row not processed: State and District both blank"
+CSV_ROW_ALL_FIELDS_BLANK = "Row not processed: State, District, Block and Role all blank"
 CSV_ROW_UNCHANGED = "No changes: already matches"
 
 CSV_ROW_UNKNOWN_STATE_TEMPLATE = "Unknown State '{state}'"
@@ -44,6 +44,7 @@ CSV_ROW_AMBIGUOUS_DISTRICT_TEMPLATE = (
     "District '{district}' is ambiguous — found in states: {candidate_states}. "
     "Specify State to disambiguate."
 )
+CSV_ROW_UNKNOWN_ROLE_TEMPLATE = "Unknown Role '{role}'"
 CSV_ROW_STORY_NOT_FOUND_TEMPLATE = "No Story found with id='{story_id}'"
 CSV_ROW_DB_ERROR_TEMPLATE = "DB error: {error}"
 CSV_ROW_SAVE_FAILED_TEMPLATE = "Save failed: {error}"

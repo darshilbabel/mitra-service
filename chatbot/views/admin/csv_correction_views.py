@@ -1,16 +1,25 @@
 import csv
 import io
 import json
+import logging
 from collections import Counter
 
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
 from django.views.generic import TemplateView
 
 from chatbot.constants import api_responses
 
+logger = logging.getLogger('django')
+
 CSV_REQUIRED_COLS = {"id", "State", "District"}
+BLOCK_COL = "Block"
+ROLE_COL = "Role"
+
+ROLE_CACHE_KEY_TEMPLATE = "csv_correction:role:{name}"
+ROLE_CACHE_TIMEOUT = 120
 
 STATUS_COL = "status"
 REMARKS_COL = "remarks"
@@ -71,7 +80,40 @@ def _extract_fields(row: dict) -> dict:
         "id":       (row.get("id") or "").strip(),
         "state":    (row.get("State") or "").strip(),
         "district": (row.get("District") or "").strip(),
+        "block":    (row.get(BLOCK_COL) or "").strip(),
+        "role":     (row.get(ROLE_COL) or "").strip(),
     }
+
+
+def _resolve_role_id(role_name: str):
+    """
+    Look up a Role's id by name, cache-aside via Redis (best-effort — a cache
+    failure falls back to the DB read rather than failing the row). Returns the
+    id, or None if no Role with that name exists.
+    """
+    from chatbot.models.story_models import Role
+
+    cache_key = ROLE_CACHE_KEY_TEMPLATE.format(name=role_name)
+
+    try:
+        cached_id = cache.get(cache_key)
+    except Exception as exc:
+        logger.error(f"CSV correction: role cache read failed for '{role_name}': {exc}", exc_info=True)
+        cached_id = None
+
+    if cached_id is not None:
+        return cached_id
+
+    role_id = Role.objects.filter(name=role_name).values_list("id", flat=True).first()
+    if role_id is None:
+        return None
+
+    try:
+        cache.set(cache_key, role_id, timeout=ROLE_CACHE_TIMEOUT)
+    except Exception as exc:
+        logger.error(f"CSV correction: role cache write failed for '{role_name}': {exc}", exc_info=True)
+
+    return role_id
 
 
 def _validate_row(fields: dict, mapping: dict) -> list:
@@ -79,6 +121,14 @@ def _validate_row(fields: dict, mapping: dict) -> list:
 
     state_val = fields["state"]
     district_val = fields["district"]
+    role_val = fields["role"]
+
+    if role_val:
+        role_id = _resolve_role_id(role_val)
+        if role_id is None:
+            errors.append(api_responses.CSV_ROW_UNKNOWN_ROLE_TEMPLATE.format(role=role_val))
+        else:
+            fields["role_id"] = role_id
 
     if not state_val and not district_val:
         return errors
@@ -133,6 +183,13 @@ def _apply_to_story(story, fields: dict) -> bool:
         changed = True
     if fields["district"] and story.district != fields["district"]:
         story.district = fields["district"]
+        changed = True
+    if fields["block"] and story.block != fields["block"]:
+        story.block = fields["block"]
+        changed = True
+    role_id = fields.get("role_id")
+    if role_id is not None and story.role_id != role_id:
+        story.role_id = role_id
         changed = True
 
     if changed:
@@ -265,10 +322,10 @@ class CsvCorrectionView(TemplateView):
         for row in rows:
             fields = _extract_fields(row)
 
-            if not fields["state"] and not fields["district"]:
+            if not fields["state"] and not fields["district"] and not fields["block"] and not fields["role"]:
                 rejected += 1
                 report_rows.append(
-                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_STATE_DISTRICT_BLANK}
+                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_ALL_FIELDS_BLANK}
                 )
                 continue
 

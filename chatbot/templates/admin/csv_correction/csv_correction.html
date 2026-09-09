@@ -83,6 +83,10 @@
         display: inline-block; padding: 2px 6px; border-radius: 3px;
         font-size: 11px; background: #dc3545; color: #fff; font-weight: 600;
     }
+    .badge-optional {
+        display: inline-block; padding: 2px 6px; border-radius: 3px;
+        font-size: 11px; background: #6c757d; color: #fff; font-weight: 600;
+    }
 
     /* ── Drop zone ── */
     .drop-zone {
@@ -212,7 +216,7 @@
         </svg>
         <div>
             <p>Bulk Metadata Correction</p>
-            <p>Upload a CSV file to fix missing or inaccurate State/District metadata for unmapped stories.
+            <p>Upload a CSV file to fix missing or inaccurate State/District/Block/Role metadata for unmapped stories.
                Corrections permanently override previous AI-generated values and instantly cascade across all live dashboard metrics.</p>
         </div>
     </div>
@@ -222,11 +226,11 @@
       <details class="schema-details">
         <summary class="schema-summary">
             <span class="schema-summary-left"><span class="schema-caret">▶</span> View CSV column reference</span>
-            <span class="schema-summary-hint">all 3 columns required ▾</span>
+            <span class="schema-summary-hint">id, State, District required — Block, Role optional ▾</span>
         </summary>
         <p style="font-size:12px;color:#666;margin:12px 0 12px 0;">
-            CSV must have exactly 3 columns: <code>id</code>, <code>State</code>, <code>District</code>.
-            For each <code>id</code>, the matching Story's <code>State</code> and <code>District</code> get updated.
+            CSV must have <code>id</code>, <code>State</code>, <code>District</code>, and may optionally have <code>Block</code> and <code>Role</code>.
+            For each <code>id</code>, the matching Story's <code>State</code>, <code>District</code>, <code>Block</code>, and <code>Role</code> get updated.
         </p>
         <table class="schema-table">
             <thead>
@@ -240,6 +244,8 @@
                 <tr><td><code>id</code></td><td><span class="badge-required">Required</span></td><td>Story integer ID — anchor key used to find the record</td></tr>
                 <tr><td><code>State</code></td><td><span class="badge-required">Required</span></td><td>Must match a state in the master data</td></tr>
                 <tr><td><code>District</code></td><td><span class="badge-required">Required</span></td><td>Must belong to the given <code>State</code> in master data. Leave blank to update the State only.</td></tr>
+                <tr><td><code>Block</code></td><td><span class="badge-optional">Optional</span></td><td>Free text. Leave blank to leave the Story's Block unchanged.</td></tr>
+                <tr><td><code>Role</code></td><td><span class="badge-optional">Optional</span></td><td>Must match a Role name in the master data. Leave blank to leave the Story's Role unchanged.</td></tr>
             </tbody>
         </table>
       </details>
