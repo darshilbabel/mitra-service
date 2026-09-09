@@ -48,13 +48,16 @@ def _load_state_district_mapping():
     state_names = set()
     state_districts = {}
     district_index = {}
-    for state in states:
-        state_name = state["name"].strip()
-        state_names.add(state_name)
-        district_names = {d["name"].strip() for d in state.get("districts", [])}
-        state_districts[state_name] = district_names
-        for district_name in district_names:
-            district_index.setdefault(district_name, []).append(state_name)
+    try:
+        for state in states:
+            state_name = str(state["name"]).strip()
+            state_names.add(state_name)
+            district_names = {str(d["name"]).strip() for d in state.get("districts", [])}
+            state_districts[state_name] = district_names
+            for district_name in district_names:
+                district_index.setdefault(district_name, []).append(state_name)
+    except (TypeError, KeyError, AttributeError):
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_MAPPING_INVALID)
 
     return {
         "state_names": state_names,
