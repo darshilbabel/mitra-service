@@ -12,7 +12,13 @@ from chatbot.constants import api_responses
 
 CSV_REQUIRED_COLS = {"id", "State", "District"}
 
-ERROR_REASON_COL = "error_reason"
+STATUS_COL = "status"
+REMARKS_COL = "remarks"
+REPORT_COLS = (STATUS_COL, REMARKS_COL)
+
+STATUS_UPDATED = "Updated"
+STATUS_UNCHANGED = "Unchanged"
+STATUS_REJECTED = "Rejected"
 
 MAPPING_REQUIRED_FIELDS = {"state", "district"}
 
@@ -143,7 +149,7 @@ def _neutralise_formula(value):
     """
     Stop a spreadsheet from evaluating uploaded text as a formula.
 
-    The rejection file echoes back cells the uploader supplied, so a value such as
+    The report file echoes back cells the uploader supplied, so a value such as
     =cmd|'/c calc'!A1 would execute when the file is opened in Excel or Sheets. Prefixing
     with an apostrophe makes the cell literal text; the apostrophe is not displayed.
     """
@@ -153,17 +159,17 @@ def _neutralise_formula(value):
     return text
 
 
-def _build_rejection_csv(rejected_rows: list, original_headers: list) -> str:
-    headers = [h for h in original_headers if h != ERROR_REASON_COL]
-    headers.append(ERROR_REASON_COL)
+def _build_report_csv(report_rows: list, original_headers: list) -> str:
+    headers = list(original_headers) + list(REPORT_COLS)
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers, extrasaction="ignore")
     # Headers come from the uploaded file too, so they need the same treatment. The
     # fieldnames stay unchanged so DictWriter can still map each row's keys.
     writer.writerow({h: _neutralise_formula(h) for h in headers})
-    for item in rejected_rows:
+    for item in report_rows:
         row = {k: _neutralise_formula(v) for k, v in dict(item["row"]).items()}
-        row[ERROR_REASON_COL] = _neutralise_formula(item["error"])
+        row[STATUS_COL] = _neutralise_formula(item["status"])
+        row[REMARKS_COL] = _neutralise_formula(item["remark"])
         writer.writerow(row)
     return output.getvalue()
 
@@ -173,8 +179,8 @@ class CsvCorrectionView(TemplateView):
     """
     Admin screen for correcting report metadata in bulk from an uploaded CSV.
     GET renders the upload page; POST validates every row against the master data before
-    committing anything, then returns a summary and, where rows failed, a rejection file
-    carrying the reason for each. Requires the Story change permission, not merely staff
+    committing anything, then returns a summary and a per-row report file covering every
+    uploaded id, with its outcome and remark. Requires the Story change permission, not merely staff
     access, because a single upload can rewrite every report in the database.
     """
 
@@ -213,7 +219,7 @@ class CsvCorrectionView(TemplateView):
         except Exception as exc:
             return JsonResponse({"success": False, "error": api_responses.CSV_PARSE_FAILED_TEMPLATE.format(error=exc)}, status=400)
 
-        original_headers = [h for h in headers if h != ERROR_REASON_COL]
+        original_headers = [h for h in headers if h not in REPORT_COLS]
 
         missing = CSV_REQUIRED_COLS - set(original_headers)
         if missing:
@@ -250,54 +256,80 @@ class CsvCorrectionView(TemplateView):
 
         from chatbot.models.story_models import Story
 
-        processed = successful = unchanged = 0
-        rejected_rows = []
+        processed = successful = unchanged = rejected = 0
+        report_rows = []
 
         for row in rows:
             fields = _extract_fields(row)
 
             if not fields["state"] and not fields["district"]:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_STATE_DISTRICT_BLANK})
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_STATE_DISTRICT_BLANK}
+                )
                 continue
 
             processed += 1
 
             raw_id = fields["id"]
             if not raw_id:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_ID_EMPTY})
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_ID_EMPTY}
+                )
                 continue
 
             errors = _validate_row(fields, mapping)
             if errors:
-                rejected_rows.append({"row": row, "error": "; ".join(errors)})
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": "; ".join(errors)}
+                )
                 continue
 
             try:
                 story = Story.objects.get(pk=int(raw_id))
             except (ValueError, TypeError, Story.DoesNotExist):
-                rejected_rows.append(
-                    {"row": row, "error": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id)}
-                )
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id),
+                })
                 continue
             except Exception as exc:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc)})
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc),
+                })
                 continue
 
             if not _apply_to_story(story, fields):
                 unchanged += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_UNCHANGED,
+                    "remark": api_responses.CSV_ROW_UNCHANGED,
+                })
                 continue
 
             try:
                 story.save()
                 successful += 1
+                report_rows.append({"row": row, "status": STATUS_UPDATED, "remark": ""})
             except Exception as exc:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_SAVE_FAILED_TEMPLATE.format(error=exc)})
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_SAVE_FAILED_TEMPLATE.format(error=exc),
+                })
 
-        rejection_csv_b64 = None
-        if rejected_rows:
-            import base64
-            rej = _build_rejection_csv(rejected_rows, original_headers)
-            rejection_csv_b64 = base64.b64encode(rej.encode("utf-8")).decode("ascii")
+        import base64
+        report = _build_report_csv(report_rows, original_headers)
+        report_csv_b64 = base64.b64encode(report.encode("utf-8")).decode("ascii")
 
         return JsonResponse({
             "success": True,
@@ -305,8 +337,8 @@ class CsvCorrectionView(TemplateView):
                 "total_processed": processed,
                 "successful_updates": successful,
                 "unchanged_rows": unchanged,
-                "rejected_rows": len(rejected_rows),
+                "rejected_rows": rejected,
             },
-            "rejection_csv": rejection_csv_b64,
-            "rejection_count": len(rejected_rows),
+            "report_csv": report_csv_b64,
+            "report_count": len(report_rows),
         })

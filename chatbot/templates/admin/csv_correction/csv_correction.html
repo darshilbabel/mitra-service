@@ -150,7 +150,17 @@
     .stat-unchanged { background: #f5f5f5; color: #616161; }
     .stat-rejected  { background: #fce4ec; color: #b71c1c; }
 
-    /* ── Rejection download bar ── */
+    /* ── Report download bar ── */
+    .report-bar {
+        display: flex; align-items: center; gap: 12px;
+        padding: 14px 18px; background: #f5f5f5;
+        border: 1px solid #ddd; border-radius: 8px; margin-top: 16px;
+    }
+    .report-bar p { margin: 0; font-size: 13px; color: #444; flex: 1; }
+    .report-bar .download-btn { background: #417690; }
+    .report-bar .download-btn:hover { background: #205067; }
+
+    /* ── Rejection warning bar ── */
     .rejection-bar {
         display: flex; align-items: center; gap: 12px;
         padding: 14px 18px; background: #fff3e0;
@@ -296,20 +306,30 @@
             </div>
         </div>
 
-        <!-- Rejection CSV download bar -->
+        <!-- Report download bar (always shown after a successful upload) -->
+        <div id="report-bar" class="report-bar hidden">
+            <svg width="20" height="20" fill="none" stroke="#417690" stroke-width="2" viewBox="0 0 24 24" style="flex-shrink:0">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <p>Report covers every id in the uploaded CSV, with its outcome (<code>status</code>) and details (<code>remarks</code>).</p>
+            <button id="download-report-btn" class="download-btn">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/>
+                </svg>
+                <span id="download-report-btn-label">Download Report</span>
+            </button>
+        </div>
+
+        <!-- Rejection warning bar (only when some rows failed) -->
         <div id="rejection-bar" class="rejection-bar hidden">
             <svg width="20" height="20" fill="none" stroke="#e65100" stroke-width="2" viewBox="0 0 24 24" style="flex-shrink:0">
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                 <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
-            <p>Some rows failed validation. Download the rejection file, correct the errors in the <code>error_reason</code> column, then re-upload.</p>
-            <button id="download-rejection-btn" class="download-btn">
-                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/>
-                </svg>
-                <span id="download-btn-label">Download Rejected Rows</span>
-            </button>
+            <p id="rejection-bar-text">Some rows failed validation. See the report's <code>status</code>/<code>remarks</code> columns for details, then correct and re-upload.</p>
         </div>
 
     </div><!-- /results-section -->
@@ -341,11 +361,11 @@
     const statSuccess       = document.getElementById('stat-success');
     const statUnchanged     = document.getElementById('stat-unchanged');
     const statRejected      = document.getElementById('stat-rejected');
+    const reportBar         = document.getElementById('report-bar');
+    const downloadBtn       = document.getElementById('download-report-btn');
     const rejectionBar      = document.getElementById('rejection-bar');
-    const downloadBtn       = document.getElementById('download-rejection-btn');
-    const downloadBtnLabel  = document.getElementById('download-btn-label');
 
-    let rejectionCsvB64 = null;
+    let reportCsvB64 = null;
 
     // ── Drag & drop ──────────────────────────────────────────────────────────
     dropZone.addEventListener('dragover', function (e) {
@@ -420,8 +440,9 @@
         successBanner.classList.add('hidden');
         errorBanner.classList.add('hidden');
         statsPanel.style.display = 'none';
+        reportBar.classList.add('hidden');
         rejectionBar.classList.add('hidden');
-        rejectionCsvB64 = null;
+        reportCsvB64 = null;
         hideInlineError();
 
         // Loading state
@@ -467,20 +488,21 @@
             } else if (s.successful_updates > 0) {
                 successText.textContent =
                     '⚠️ ' + s.successful_updates + ' row(s) updated.' + unchangedNote + ' ' +
-                    s.rejected_rows + ' row(s) failed — see the rejection file below.';
+                    s.rejected_rows + ' row(s) failed — see the report below.';
                 successBanner.classList.remove('hidden');
             } else {
                 errorText.textContent =
                     'All ' + s.rejected_rows + ' rows failed validation. ' +
-                    'No changes were saved. Download the rejection file to see errors.';
+                    'No changes were saved. Download the report below to see errors.';
                 errorBanner.classList.remove('hidden');
             }
 
-            // Rejection CSV download
-            if (data.rejection_csv && data.rejection_count > 0) {
-                rejectionCsvB64 = data.rejection_csv;
-                downloadBtnLabel.textContent =
-                    'Download Rejected Rows (' + data.rejection_count + ')';
+            // Report download (always available when rows were processed)
+            if (data.report_csv) {
+                reportCsvB64 = data.report_csv;
+                reportBar.classList.remove('hidden');
+            }
+            if (s.rejected_rows > 0) {
                 rejectionBar.classList.remove('hidden');
             }
         })
@@ -496,17 +518,24 @@
         });
     });
 
-    // ── Rejection CSV download ───────────────────────────────────────────────
+    // ── Report CSV download ──────────────────────────────────────────────────
+    function timestamp() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' +
+               pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    }
+
     downloadBtn.addEventListener('click', function () {
-        if (!rejectionCsvB64) return;
-        const bytes = atob(rejectionCsvB64);
+        if (!reportCsvB64) return;
+        const bytes = atob(reportCsvB64);
         const arr = new Uint8Array(bytes.length);
         for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
         const blob = new Blob([arr], { type: 'text/csv' });
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href     = url;
-        a.download = 'correction_rejected_rows.csv';
+        a.download = 'correction_report_' + timestamp() + '.csv';
         a.click();
         URL.revokeObjectURL(url);
     });

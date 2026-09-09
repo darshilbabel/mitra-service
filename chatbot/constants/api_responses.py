@@ -33,6 +33,7 @@ CSV_DUPLICATE_IDS_TEMPLATE = (
 
 CSV_ROW_ID_EMPTY = "id is empty"
 CSV_ROW_STATE_DISTRICT_BLANK = "Row not processed: State and District both blank"
+CSV_ROW_UNCHANGED = "No changes: already matches"
 
 CSV_ROW_UNKNOWN_STATE_TEMPLATE = "Unknown State '{state}'"
 CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE = "Unknown District '{district}'"
