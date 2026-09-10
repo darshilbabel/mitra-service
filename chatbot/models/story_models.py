@@ -1,8 +1,11 @@
 import io
 import os
 import logging
+from urllib.parse import urlparse
 from django.db import models
 from django.db.models.functions import Lower
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.core.validators import MinLengthValidator
 from simple_history.models import HistoricalRecords
 from chatbot.models import Profile, TagChoices, StoryLanguageChoices, StorySourceChoices, MediaTypeChoices, \
@@ -15,6 +18,16 @@ S3_BASE_URL = os.getenv('S3_MEDIA_URL')
 register_heif_opener()
 
 logger = logging.getLogger('django')
+
+
+def _delete_s3_key(key):
+    if not key:
+        return
+    try:
+        from chatbot.services.storage import StorageFactory
+        StorageFactory.get_storage_handler().delete_file(key)
+    except Exception as e:
+        logger.warning("StoryMedia S3 delete failed for key=%s: %s", key, e)
 
 
 class LeaderCategory(models.Model):
@@ -337,6 +350,19 @@ class StoryMedia(models.Model):
             print("Error during save():", str(e))
 
         super().save(*args, **kwargs)
+
+
+@receiver(post_delete, sender=StoryMedia)
+def delete_story_media_file_from_s3(sender, instance, **kwargs):
+    """
+    Fired on every StoryMedia delete, including the CASCADE Django runs
+    when the parent Story is deleted (Collector sends signals per instance
+    even though it never calls instance.delete()).
+    """
+    if instance.file:
+        _delete_s3_key(instance.file.name)
+    elif instance.file_url:
+        _delete_s3_key(urlparse(instance.file_url).path.lstrip('/'))
 
 
 class Tag(models.Model):

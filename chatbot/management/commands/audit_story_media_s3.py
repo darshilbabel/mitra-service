@@ -78,9 +78,6 @@ Findings, in the order they usually matter:
                    without this a row referencing another environment would look
                    healthy while rendering from somewhere else.
   EXCLUDED         row and object both exist, but include_in_story is False.
-  NO_MEDIA         --db-only mode only: the story has no non-PDF media rows at
-                   all. A candidate set, never a finding: without the S3 pass it
-                   cannot be told apart from "no photo was ever uploaded".
 
 Not findings - reported so they cannot be mistaken for findings:
 
@@ -113,8 +110,7 @@ Usage
     python manage.py audit_story_media_s3 --prefix chatbot/storymedia/ \
         --scan-unattributed --out orphans.csv
 
-    # 3. One flow over a date window. --flow matches ChatSession.session_type;
-    #    run --list-flows for the values present in a given database.
+    # 3. One flow over a date window. --flow matches ChatSession.session_type.
     python manage.py audit_story_media_s3 --prefix chatbot/storymedia/ \
         --flow shikshalokam_chaupal --from 2026-06-01 --to 2026-08-26 \
         --out chaupal.csv
@@ -122,9 +118,6 @@ Usage
     # 4. Specific sessions reported from the field.
     python manage.py audit_story_media_s3 --prefix chatbot/storymedia/ \
         --session abc-123,def-456 --all-rows --out field_reports.csv
-
-    # 5. No S3 at all - NO_FILE_REF and STALE_REPORT need only the database.
-    python manage.py audit_story_media_s3 --db-only --out blank_rows.csv
 
 Scoping by flow
 ---------------
@@ -139,8 +132,8 @@ devqa database shows values that appear in neither ChatType nor SessionFlowName
 ('stakeholder-fgd', 'shiksha-samvad', 'bihar-student-fgd', 'delhi-shiksha-samvad').
 Some values, notably 'guest-discussion', appear in BOTH this column and
 Story.other_params['flow'] while selecting completely different sets of stories.
-Run --list-flows against the database you are about to audit; do not carry a
-value over from another environment or from an enum in the source.
+Check the values present in the database you are about to audit; do not carry
+a value over from another environment or from an enum in the source.
 
 It is deliberately NOT Story.other_params['flow']. That key is a client-supplied
 request parameter, copied verbatim from the POST body of end_story /
@@ -426,8 +419,8 @@ class Command(BaseCommand):
             help="Comma-separated ChatSession.session_type values, e.g. "
                  "'shikshalokam_chaupal' or 'stakeholder-fgd'. Not a closed "
                  "enum - some values are ChatType members and some are whatever "
-                 "the client sent. ALWAYS run --list-flows against the database "
-                 "you are auditing rather than reusing a value from elsewhere.",
+                 "the client sent. Check the values present in the database you "
+                 "are auditing rather than reusing a value from elsewhere.",
         )
         parser.add_argument(
             "--story-flow",
@@ -482,20 +475,6 @@ class Command(BaseCommand):
             help="Write OK rows to the CSV too, not just the problems.",
         )
         parser.add_argument("--out", help="CSV output path. Defaults to stdout summary only.")
-
-        # Local / offline modes - no S3, no boto3, no credentials.
-        parser.add_argument(
-            "--db-only", action="store_true",
-            help="Never touch S3. Report what the database alone knows about each "
-                 "story's media. Use this to pull entries for a flow locally.",
-        )
-        parser.add_argument(
-            "--list-flows", action="store_true",
-            help="Never touch S3. Print the distinct ChatSession.session_type "
-                 "values with story counts - cross-tabulated against "
-                 "Story.other_params['flow'] - so --flow and --story-flow can "
-                 "each be given a real value.",
-        )
 
     # ------------------------------------------------------------------ setup
 
@@ -910,10 +889,8 @@ class Command(BaseCommand):
             self.note("""
 That includes the PDF row update_story_pdf requires to already exist, so
 this table is almost certainly incomplete or was never loaded. It is not a
-plausible production state.
-
-  --db-only   NO_MEDIA inflates to ~100%
-  S3 mode     ORPHAN_IN_S3 inflates to ~100% - every object has no row
+plausible production state. ORPHAN_IN_S3 inflates to ~100% - every object has
+no row.
 
 Treat this run as a plumbing test only. The counts are not findings.
 """, self.style.ERROR)
@@ -955,9 +932,9 @@ Treat this run as a plumbing test only. The counts are not findings.
                 f"  this run covers at most {share:.1%} of the database.\n"
                 f"\n"
                 f"  On a partial dump that is expected. On a full one it means the scope is\n"
-                f"  far narrower than it looks, and a zero finding count says nothing. Check\n"
-                f"  --list-flows, and prefer running unscoped when the question is 'across\n"
-                f"  every cycle' rather than 'this one flow'.\n"
+                f"  far narrower than it looks, and a zero finding count says nothing.\n"
+                f"  Prefer running unscoped when the question is 'across every cycle'\n"
+                f"  rather than 'this one flow'.\n"
             ))
 
     def warn_if_empty(self, opts, total):
@@ -994,8 +971,8 @@ Treat this run as a plumbing test only. The counts are not findings.
                 "Story.other_params['flow'] (use --story-flow for that - note some "
                 "values such as 'guest-discussion' exist in BOTH columns and select "
                 "different stories), and it is not a CompanyBot route such as "
-                "'/shikshalokam_chaupal'. Run --list-flows for the values actually "
-                "present in this database."
+                "'/shikshalokam_chaupal'. Check the values actually present in this "
+                "database."
             ))
         if "story_flow" in applied:
             self.stdout.write(self.style.WARNING(
@@ -1076,15 +1053,6 @@ Treat this run as a plumbing test only. The counts are not findings.
 
     def handle(self, *args, **opts):
         media_base = os.getenv("S3_MEDIA_URL") or ""
-
-        # These two modes never construct an S3 client, so they run on a laptop
-        # with no credentials and no boto3 installed.
-        if opts["list_flows"]:
-            self.list_flows()
-            return
-        if opts["db_only"]:
-            self.run_db_only(opts, media_base)
-            return
 
         client, bucket = self.get_s3(opts.get("bucket"))
 
@@ -1395,178 +1363,6 @@ Treat this run as a plumbing test only. The counts are not findings.
 
         self.write_out(rows, opts.get("out"))
         self.summarise(counters)
-
-    # ------------------------------------------------------------ db-only
-
-    def list_flows(self):
-        """
-        What --flow and --story-flow can actually be given, in this database.
-
-        Prints both columns and the cross-tabulation between them, because the
-        two are related but not equal and no amount of prose settles which value
-        a given deployment stores. See the 'Scoping by flow' docstring section.
-
-        The story side is read straight off other_params in Python rather than
-        through a JSON lookup, so it behaves the same on SQLite and Postgres.
-        """
-        from collections import Counter
-
-        session_types = {}
-        for session, session_type in ChatSession.objects.values_list(
-            "session", "session_type"
-        ).iterator(chunk_size=2000):
-            if session:
-                session_types[session] = session_type or "<null session_type>"
-
-        types = Counter()
-        flows = Counter()
-        pairs = Counter()
-        states = Counter()
-        total = 0
-        for session, params, state in Story.objects.values_list(
-            "session", "other_params", "state"
-        ).iterator(chunk_size=2000):
-            total += 1
-            session_type = session_types.get(session, "<no ChatSession row>")
-            story_flow = (params or {}).get("flow") or "<no flow>"
-            types[session_type] += 1
-            flows[story_flow] += 1
-            pairs[(session_type, story_flow)] += 1
-            states[state or "<no state>"] += 1
-
-        self.stdout.write(
-            f"{total} stories in this database, "
-            f"{len(session_types)} ChatSession rows\n"
-        )
-
-        self.stdout.write("ChatSession.session_type  ->  pass to --flow:")
-        for session_type, count in types.most_common():
-            self.stdout.write(f"  {count:>7}  {session_type}")
-
-        self.stdout.write("\nStory.other_params['flow']  ->  pass to --story-flow:")
-        for story_flow, count in flows.most_common():
-            self.stdout.write(f"  {count:>7}  {story_flow}")
-
-        self.stdout.write(
-            "\ncross-tab (session_type x story flow) - the mapping in THIS database:"
-        )
-        for (session_type, story_flow), count in pairs.most_common():
-            self.stdout.write(f"  {count:>7}  {session_type:<28} {story_flow}")
-
-        orphaned = types.get("<no ChatSession row>", 0)
-        if orphaned:
-            self.stdout.write(self.style.WARNING(
-                f"\n  {orphaned} stories have no ChatSession row for their session. "
-                f"--flow cannot reach them;\n"
-                f"  in a partial dump this is expected, in a full one it is worth "
-                f"asking about."
-            ))
-        unflowed = flows.get("<no flow>", 0)
-        if unflowed:
-            self.stdout.write(self.style.WARNING(
-                f"\n  {unflowed} stories have no other_params['flow'] at all. "
-                f"--story-flow cannot reach\n"
-                f"  them; --flow can, as long as the ChatSession row exists. This "
-                f"asymmetry is the\n"
-                f"  reason --flow scopes on session_type."
-            ))
-
-        self.stdout.write("\nstates:")
-        for state, count in states.most_common(25):
-            self.stdout.write(f"  {count:>7}  {state}")
-
-        self.stdout.write(
-            "\nIf this prints 0 stories, the database has no data to audit - "
-            "restore a dump first.\n"
-        )
-
-    def run_db_only(self, opts, media_base):
-        """
-        Everything the database alone can say, with no S3 call. This cannot
-        distinguish 'photo never uploaded' from 'photo uploaded but the row was
-        lost' - only the S3 pass can. It does fully resolve the rows that exist
-        but cannot render, and the reports rendered before their photos landed.
-        """
-        rows = []
-        counters = {
-            "stories": 0, "OK": 0, "NO_MEDIA": 0,
-            "NO_FILE_REF": 0, "EXCLUDED": 0, "STALE_REPORT": 0,
-        }
-
-        self.preflight()
-        self.warn_flow_coverage(opts)
-        stories = self.build_queryset(opts)
-        total = stories.count()
-        if not self.warn_if_empty(opts, total):
-            return
-        self.stdout.write(f"DB-only mode (no S3). Examining {total} stories ...\n")
-
-        for story in self.iterate(stories, opts.get("limit")):
-            counters["stories"] += 1
-            if counters["stories"] % 500 == 0:
-                self.stdout.write(f"  ... {counters['stories']}/{total}")
-
-            media_rows = list(story.story_media.all())
-            pdf_row = next(
-                (m for m in media_rows if m.media_type == MediaTypeChoices.PDF), None
-            )
-            images = [m for m in media_rows if m.media_type != MediaTypeChoices.PDF]
-
-            if not images:
-                counters["NO_MEDIA"] += 1
-                rows.append(self.row(
-                    story, "", "", "", None, pdf_row, "NO_MEDIA",
-                    "no non-PDF StoryMedia rows at all - either no photo was ever "
-                    "uploaded, or the row was lost; only the S3 pass can tell which",
-                ))
-                continue
-
-            for media in images:
-                key = to_object_key(
-                    media.file_url or (media.file.name if media.file else None),
-                    None, media_base,
-                )
-                if not key:
-                    status = "NO_FILE_REF"
-                    notes = ("row exists but neither file nor file_url is set - "
-                             "nothing for the report to render")
-                elif not media.include_in_story:
-                    status = "EXCLUDED"
-                    notes = "include_in_story=False, so story_images_page skips it"
-                elif (pdf_row and media.created_at and pdf_row.updated_at
-                      and media.created_at > pdf_row.updated_at):
-                    status = "STALE_REPORT"
-                    notes = ("image row is newer than the stored PDF - the report was "
-                             "rendered before this photo was recorded")
-                else:
-                    status = "OK"
-                    notes = ""
-
-                counters[status] = counters.get(status, 0) + 1
-                if status == "OK" and not opts["all_rows"]:
-                    continue
-                rows.append(self.row(story, key, "", "", media, pdf_row, status, notes))
-
-        self.write_out(rows, opts.get("out"))
-
-        self.rule("results (database only - S3 not consulted)")
-        self.field("stories examined", counters["stories"])
-        self.stdout.write("")
-        self.field("OK", counters["OK"], "at least one usable media row")
-        self.field("NO_MEDIA", counters["NO_MEDIA"], "no media row at all",
-                   self.style.WARNING)
-        self.field("NO_FILE_REF", counters["NO_FILE_REF"], "row exists but points nowhere",
-                   self.style.ERROR)
-        self.field("STALE_REPORT", counters["STALE_REPORT"], "report older than the photo",
-                   self.style.WARNING)
-        self.field("EXCLUDED", counters["EXCLUDED"], "include_in_story=False")
-
-        self.rule("what to do next")
-        self.note("""
-NO_MEDIA is a CANDIDATE set, not a finding. It mixes stories that lost their
-photo with stories that were never asked for one. Proving an object is really
-sitting in S3 for those stories needs a run without --db-only.
-""")
 
     # -------------------------------------------------------- unattributed
 
