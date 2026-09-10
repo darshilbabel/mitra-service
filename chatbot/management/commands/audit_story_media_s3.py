@@ -100,9 +100,6 @@ Not findings - reported so they cannot be mistaken for findings:
 
 Usage
 -----
-    # 0. Learn the real key layout. Do not guess a prefix.
-    python manage.py audit_story_media_s3 --discover
-
     # 1. Characterise a prefix and check its identifiers resolve to Stories.
     python manage.py audit_story_media_s3 --inspect chatbot/storymedia/
 
@@ -192,10 +189,14 @@ travels with the CSV instead of staying in someone's memory.
 
 Environment
 -----------
-Reads the same variables the app uses: STORAGE_CLOUD_PROVIDER, S3_BUCKET_NAME,
-AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_MEDIA_URL. The S3
-client is taken from AWSS3StorageHandler so credentials resolve exactly as they
-do in the running app; --bucket overrides the bucket for cross-env checks.
+Reads the same variables the app uses: S3_BUCKET_NAME, AWS_REGION,
+AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_MEDIA_URL. The S3 client is taken
+from StorageFactory.get_storage_handler(provider="AWS") - the same factory
+aws_views.py uses - so credentials resolve exactly as they do in the running
+app; --bucket overrides the bucket for cross-env checks. Provider is forced to
+"AWS" rather than read from STORAGE_CLOUD_PROVIDER because this command talks
+to the S3 API directly (ListObjectsV2 paginators); a LOCAL handler has no
+client to give it.
 """
 
 import csv
@@ -218,10 +219,9 @@ from chatbot.models.company_models import CompanyChat
 # when it calls a prefix usable, so the two cannot contradict each other.
 DEFAULT_MIN_RESOLVE = 0.8
 
-# --discover / --inspect display tuning. Constants rather than flags: they
-# change what the diagnostic looks like, never what it concludes, and no run
-# has ever needed a different value.
-MAX_CHILDREN = 40
+# --inspect display tuning. Constant rather than a flag: it changes what the
+# diagnostic looks like, never what it concludes, and no run has ever needed
+# a different value.
 SAMPLE_KEYS = 3
 
 CSV_COLUMNS = [
@@ -400,11 +400,6 @@ class Command(BaseCommand):
             help="Object key prefix that story uploads live under, e.g. "
                  "'chatbot/storymedia/'. Run --discover first if unsure.",
         )
-        parser.add_argument(
-            "--discover", action="store_true",
-            help="Do not audit. List the bucket's top two prefix levels with "
-                 "object counts so the real folder_structure is visible.",
-        )
         parser.add_argument("--bucket", help="Override S3_BUCKET_NAME.")
         parser.add_argument(
             "--inspect",
@@ -478,17 +473,17 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ setup
 
-    def get_s3(self, bucket_override):
+    def get_storage_client(self, bucket_override):
         try:
-            from chatbot.services.storage.aws_storage_handler import AWSS3StorageHandler
+            from chatbot.services.storage import StorageFactory
         except ImportError as exc:  # pragma: no cover
-            raise CommandError(f"Could not import the S3 handler: {exc}")
+            raise CommandError(f"Could not import the storage factory: {exc}")
 
         config = {}
         if bucket_override:
             config["bucket_name"] = bucket_override
         try:
-            handler = AWSS3StorageHandler(config)
+            handler = StorageFactory.get_storage_handler(config=config)
         except ValueError as exc:
             raise CommandError(
                 f"S3 not configured ({exc}). Set S3_BUCKET_NAME and AWS_REGION, "
@@ -496,58 +491,7 @@ class Command(BaseCommand):
             )
         return handler.client, handler.bucket_name
 
-    # --------------------------------------------------------------- discover
-
-    def discover(self, client, bucket, max_children=MAX_CHILDREN, samples=SAMPLE_KEYS):
-        """
-        Show the bucket's top two prefix levels, with sample keys.
-
-        S3 returns CommonPrefixes lexicographically, so a prefix like
-        'chatbot/storymedia/' sorts after any numeric- or letter-leading sibling.
-        Truncation is therefore always announced rather than silent: a capped
-        listing can hide the very prefix being looked for. Sample keys are
-        printed alongside the counts, because the shape of a real key settles
-        the layout far faster than a count does.
-        """
-        self.stdout.write(f"Bucket: {bucket}\n")
-        paginator = client.get_paginator("list_objects_v2")
-
-        def children(prefix):
-            found = []
-            for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
-                for common in page.get("CommonPrefixes", []):
-                    found.append(common["Prefix"])
-            return found
-
-        def sample_keys(prefix, count):
-            response = client.list_objects_v2(
-                Bucket=bucket, Prefix=prefix, MaxKeys=max(count, 1)
-            )
-            return [obj["Key"] for obj in response.get("Contents", [])][:count]
-
-        for level_one in children(""):
-            count = self.count_objects(client, bucket, level_one, cap=20000)
-            self.stdout.write(f"  {level_one:<50} ~{count} objects")
-
-            for key in sample_keys(level_one, samples):
-                self.stdout.write(f"      e.g. {key}")
-
-            subs = children(level_one)
-            for level_two in subs[:max_children]:
-                sub_count = self.count_objects(client, bucket, level_two, cap=20000)
-                self.stdout.write(f"    {level_two:<48} ~{sub_count} objects")
-            if len(subs) > max_children:
-                self.stdout.write(self.style.WARNING(
-                    f"    ... and {len(subs) - max_children} MORE sub-prefixes not "
-                    f"shown (display cap MAX_CHILDREN={max_children}) - run "
-                    f"--inspect on one of these to see inside it"
-                ))
-
-        self.stdout.write(
-            "\nRead the 'e.g.' sample keys, not just the counts. The segment after "
-            "the prefix identifies the story - it may be a numeric Story.id or a "
-            "Story.session token; the audit matches either.\n"
-        )
+    # --------------------------------------------------------------- inspect
 
     def inspect_prefix(self, client, bucket, prefix, samples=SAMPLE_KEYS):
         """
@@ -742,15 +686,6 @@ class Command(BaseCommand):
             lines.append(f"  {'not in the database':<{self.LABEL}} {', '.join(missing)}")
         return lines
 
-    def count_objects(self, client, bucket, prefix, cap=5000):
-        paginator = client.get_paginator("list_objects_v2")
-        total = 0
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            total += page.get("KeyCount", 0)
-            if total >= cap:
-                return f"{cap}+"
-        return total
-
     def list_prefix(self, client, bucket, prefix):
         """Yield (key, size, last_modified) for every object under prefix."""
         paginator = client.get_paginator("list_objects_v2")
@@ -786,6 +721,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"  ... {total} objects indexed")
 
             segment = key[len(prefix):].split("/", 1)[0]
+            self.stdout.write(f"Segment: {segment}")
             by_segment.setdefault(segment, []).append((key, size, last_modified))
 
         numeric = sum(1 for seg in by_segment if seg.isdigit())
@@ -1054,18 +990,16 @@ Treat this run as a plumbing test only. The counts are not findings.
     def handle(self, *args, **opts):
         media_base = os.getenv("S3_MEDIA_URL") or ""
 
-        client, bucket = self.get_s3(opts.get("bucket"))
+        client, bucket = self.get_storage_client(opts.get("bucket"))
 
-        if opts["discover"]:
-            self.discover(client, bucket)
-            return
+        prefix = opts.get("prefix")
+
         if opts["inspect"]:
             self.inspect_prefix(client, bucket, opts["inspect"])
             return
 
-        prefix = opts.get("prefix")
         if not prefix:
-            raise CommandError("--prefix is required (or run --discover first).")
+            prefix = "chatbot/storymedia/"
         if not prefix.endswith("/"):
             prefix += "/"
 
