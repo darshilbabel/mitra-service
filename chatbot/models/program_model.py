@@ -11,7 +11,7 @@ class Program(models.Model):
     """
 
     program_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=1000, null=True, blank=True)
+    name = models.CharField(max_length=1000, null=False, blank=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -19,7 +19,7 @@ class Program(models.Model):
     history = HistoricalRecords()
 
     def __str__(self):
-        return self.name or self.program_uuid
+        return self.name
 
     class Meta:
         indexes = [

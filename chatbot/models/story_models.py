@@ -26,7 +26,7 @@ class LeaderCategory(models.Model):
     """
 
     leader_category_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=1000)
+    name = models.CharField(max_length=1000, null=False, blank=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -59,7 +59,7 @@ class Role(models.Model):
     """
 
     role_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=1000)
+    name = models.CharField(max_length=1000, null=False, blank=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
