@@ -376,6 +376,7 @@ class CsvCorrectionView(TemplateView):
                 continue
 
             try:
+                story.full_clean()
                 story.save()
                 successful += 1
                 report_rows.append({"row": row, "status": STATUS_UPDATED, "remark": ""})

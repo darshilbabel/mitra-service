@@ -10,6 +10,7 @@ from chatbot.models import Profile, TagChoices, StoryLanguageChoices, StorySourc
 from pillow_heif import register_heif_opener
 from django.core.files.base import ContentFile
 from PIL import Image, UnidentifiedImageError
+import uuid
 
 S3_BASE_URL = os.getenv('S3_MEDIA_URL')
 register_heif_opener()
@@ -24,7 +25,7 @@ class LeaderCategory(models.Model):
     rather than from the person who filed them.
     """
 
-    code = models.CharField(max_length=100, unique=True)
+    leader_category_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=1000)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -39,7 +40,7 @@ class LeaderCategory(models.Model):
         verbose_name = "Leader Category"
         verbose_name_plural = "Leader Categories"
         indexes = [
-            models.Index(fields=['code']),
+            models.Index(fields=['leader_category_uuid']),
         ]
         # Matched with name__iexact when resolving CSV corrections, so uniqueness has to
         # be case-insensitive: a plain unique flag would still allow two rows differing
@@ -57,7 +58,7 @@ class Role(models.Model):
     so the set here is the only vocabulary a report's role can use.
     """
 
-    code = models.CharField(max_length=100, unique=True)
+    role_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=1000)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -72,7 +73,7 @@ class Role(models.Model):
         verbose_name = "Role"
         verbose_name_plural = "Roles"
         indexes = [
-            models.Index(fields=['code']),
+            models.Index(fields=['role_uuid']),
         ]
         constraints = [
             # Roles are resolved with Role.objects.filter(name__iexact=...).first(), and

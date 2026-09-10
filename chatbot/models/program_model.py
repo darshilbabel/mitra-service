@@ -1,4 +1,4 @@
-from django.contrib.auth.models import User
+import uuid
 from django.db import models
 from simple_history.models import HistoricalRecords
 
@@ -10,13 +10,12 @@ class Program(models.Model):
     a report is tagged with one through the bot and state it came from.
     """
 
-    program_uuid = models.CharField(max_length=500, unique=True)
+    program_uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=1000, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     history = HistoricalRecords()
 
     def __str__(self):

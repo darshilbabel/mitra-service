@@ -163,35 +163,32 @@ class StoryAdmin(admin.ModelAdmin):
         return render(request, 'admin/export_story_format.html', {'ids': ids})
 
 
-class CodeNameMasterAdmin(admin.ModelAdmin):
-    """
-    Shared admin configuration for the code-and-name master lists.
-    Roles and leader categories are both small reference tables with the same shape, so
-    their list, search and ordering behaviour lives here and stays consistent as further
-    master lists are added.
-    """
-
-    list_display = ('name', 'code', 'created_at')
-    search_fields = ('name', 'code')
-    ordering = ('name',)
-
-
 @admin.register(LeaderCategory)
-class LeaderCategoryAdmin(CodeNameMasterAdmin):
+class LeaderCategoryAdmin(admin.ModelAdmin):
     """
     Admin interface for the leader category master list.
     These are the categories programmes are mapped to, so entries here are referenced by
-    company bot programme mappings and must not be renamed casually.
+    company bot programme mappings and must not be renamed casually. leader_category_uuid
+    is an opaque generated id, not human-searchable, so it is left out of search/list.
     """
+
+    list_display = ('name', 'created_at')
+    search_fields = ('name',)
+    ordering = ('name',)
 
 
 @admin.register(Role)
-class RoleAdmin(CodeNameMasterAdmin):
+class RoleAdmin(admin.ModelAdmin):
     """
     Admin interface for the role master list.
     Capture flows and the CSV correction tool both resolve incoming values against these
-    names, so a role that is missing here cannot be assigned to a report.
+    names, so a role that is missing here cannot be assigned to a report. role_uuid is an
+    opaque generated id, not human-searchable, so it is left out of search/list.
     """
+
+    list_display = ('name', 'created_at')
+    search_fields = ('name',)
+    ordering = ('name',)
 
 
 @admin.register(StoryTranslation)
