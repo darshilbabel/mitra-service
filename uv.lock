@@ -822,6 +822,18 @@ wheels = [
 ]
 
 [[package]]
+name = "django-admin-inlines"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/21/0f/aab2bf8536338373cc40fd7afadf389d4d7eb4c9990057dd301ca80ab072/django_admin_inlines-1.1.0.tar.gz", hash = "sha256:648e3f3d1c568e2b2ddea5a56b0e68c97f89187a9a5dff0cf8fb794d5c251d57", size = 13837, upload-time = "2025-06-18T18:07:19.263Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/3c/a407002922181d7e76f354de95a82b7d0f1db442be91931fb6089240efc1/django_admin_inlines-1.1.0-py3-none-any.whl", hash = "sha256:2551b137a3de014db3327cbe8e307052909653c3ad9e095591b74b48b256473b", size = 11842, upload-time = "2025-06-18T18:07:18.105Z" },
+]
+
+[[package]]
 name = "django-admin-rangefilter"
 version = "0.13.5"
 source = { registry = "https://pypi.org/simple" }
@@ -4297,6 +4309,7 @@ dependencies = [
     { name = "daphne" },
     { name = "deepeval" },
     { name = "django" },
+    { name = "django-admin-inlines" },
     { name = "django-admin-rangefilter" },
     { name = "django-celery-results" },
     { name = "django-cors-headers" },
@@ -4389,6 +4402,7 @@ requires-dist = [
     { name = "daphne", specifier = ">=4.2.1" },
     { name = "deepeval", specifier = ">=3.8.2" },
     { name = "django", specifier = "==5.2.0" },
+    { name = "django-admin-inlines", specifier = ">=1.1.0" },
     { name = "django-admin-rangefilter", specifier = ">=0.13.5" },
     { name = "django-celery-results", specifier = ">=2.6.0" },
     { name = "django-cors-headers", specifier = ">=4.9.0" },

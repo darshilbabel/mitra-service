@@ -63,3 +63,15 @@ def split_audio(audio_bytes, chunk_duration=10):
             chunk_number += 1
 
     return chunks
+
+# Calculates and returns the exact duration of a WAV audio chunk in seconds by dividing its total frame count by the sample rate.
+def get_wav_duration(audio_bytes):
+    """Return the actual duration of a WAV audio chunk in seconds."""
+    with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+        frames = wav_file.getnframes()
+        sample_rate = wav_file.getframerate()
+
+    if sample_rate <= 0:
+        raise ValueError("Invalid WAV sample rate")
+
+    return frames / sample_rate

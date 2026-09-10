@@ -46,7 +46,6 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
         except Exception as e:
             logger.error('Disconnect Error: %s', e, exc_info=True)
         finally:
-            # Don't call self.close() here - let the parent handle that
             await super().disconnect(code)
 
     async def receive(self, text_data):
@@ -55,6 +54,7 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
             text_data_json = json.loads(text_data)
             message_type = text_data_json.get('type', None)
             company_chat_status = None
+
             if message_type == 'authenticate':
                 self.session_id = text_data_json.get('sessionid')
                 self.profile_id = text_data_json.get('profileid')
@@ -70,15 +70,12 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
                 )
 
                 user_id = await self.handle_access_token(self.access_token)
-
                 self.company_bot = await self.get_company_bot(profile, self.bot_route)
 
-                # Create chat session asynchronously
                 await self.create_chat_session(
                     self.session_id, profile, self.company_bot, self.ip_address, user_id
                 )
             else:
-                # Validate that user is authenticated before processing messages
                 if not self.session_id or not self.bot_route:
                     error_msg = "Authentication required. Please send authentication message first with type='authenticate', sessionid, profileid, route, and bot_route."
                     logger.error(f"Unauthenticated message attempt: {error_msg}")
@@ -130,7 +127,6 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
                             f"step={chat_session.current_step}. "
                             f"Please create state machines in admin panel."
                         )
-                # Use a task for database operations
                 await database_sync_to_async(save_in_company_db)(
                     session_id=self.session_id, profile_id=self.profile_id, initiated_by='User',
                     message=text_data_json['text'], chunks=None, status=company_chat_status,
@@ -144,10 +140,10 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
             )
 
             if message_type != 'authenticate':
-                # Start the Celery task but don't wait for it
                 get_flow_response.delay(
                     self.channel_name, self.session_id, self.profile_id, self.route,
-                    'common', self.bot_route
+                    'common', self.bot_route,
+                    text_data=text_data_json.get('text')
                 )
 
         except Exception as e:
@@ -171,23 +167,16 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
     @database_sync_to_async
     def handle_access_token(self, access_token):
         user_id = None
-
         if access_token:
             print("Access Token: ", access_token)
-
             try:
-                decoded = jwt.decode(
-                    access_token,
-                    PUBLIC_KEY,
-                    algorithms=["HS256"]
-                )
+                decoded = jwt.decode(access_token, PUBLIC_KEY, algorithms=["HS256"])
                 print("Decoded JWT: ", decoded)
                 if decoded:
                     user_id = decoded.get("data", {}).get("id")
             except Exception as e:
                 logger.error('JWT Decode Error: %s', e, exc_info=True)
                 print(f"JWT Decode Error: {e}")
-
         logger.info("User_id: %s", user_id)
         return user_id
 
@@ -226,17 +215,13 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
         if not cs_created:
             if cs.language != self.route:
                 cs.language = self.route
-
             other_params = cs.other_params or {}
             other_params["ip_address"] = ip_address
-
             cs.other_params = other_params
-
             cs.save(update_fields=["language", "other_params"])
         else:
             cs.other_params = {"ip_address": ip_address}
             cs.save(update_fields=["other_params"])
-
 
         return cs
 
@@ -247,11 +232,8 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
                 return message
 
             voice_provider = Voice.objects.filter(
-                company_bot=self.company_bot,
-                type=VoiceType.TextToText,
-                language=self.route
+                company_bot=self.company_bot, type=VoiceType.TextToText, language=self.route
             ).first()
-
             if not voice_provider:
                 return message
 
@@ -265,19 +247,17 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
 
             if state_machine and state_machine.text_conversion_type == TextConversionType.TRANSLITERATE:
                 transliterate_voice_provider = Voice.objects.filter(
-                    company_bot=self.company_bot,
-                    type=VoiceType.Transliterate,
-                    language=self.route
+                    company_bot=self.company_bot, type=VoiceType.Transliterate, language=self.route
                 ).first()
-                response =  transliterate_text(
-                    voice_provider=transliterate_voice_provider, source_language=self.route, target_language='en',
-                    message_body=message, is_sentence=True
+                response = transliterate_text(
+                    voice_provider=transliterate_voice_provider, source_language=self.route,
+                    target_language='en', message_body=message, is_sentence=True
                 )
                 print("Trans response: ", response)
                 if response and response.get('content'):
                     content = response.get('content')
                     print("Trans content: ", content)
-                    if content and isinstance(content, list) and len(content)>0:
+                    if content and isinstance(content, list) and len(content) > 0:
                         content = content[0]
                     return content
             else:
@@ -285,7 +265,6 @@ class AsyncSocketConsumer(AsyncBaseConsumer):
                     voice_provider=voice_provider, message_body=message,
                     target_language='en', source_language=self.route
                 )
-
                 if response.get('status') == 200:
                     return response.get('content')
                 else:

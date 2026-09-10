@@ -1,11 +1,15 @@
 import os
 import re
 import logging
+import contextvars
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sarvamai import SarvamAI
 
+from chatbot.utils.langfuse_client import get_langfuse_client
+from chatbot.utils.stt_pricing import compute_translate_usage_and_cost
 
 logger = logging.getLogger("django")
+langfuse = get_langfuse_client()
 
 
 class SarvamLanguageService:
@@ -16,11 +20,6 @@ class SarvamLanguageService:
 
     @staticmethod
     def split_text_into_chunks(text, max_chars=990):
-        """
-        Splits text into chunks under max_chars.
-        Tries to split on sentence boundaries (., ?, !).
-        Falls back to word-safe chunks if punctuation is missing.
-        """
         chunks = []
         sentence_end_pattern = re.compile(r'(?<=[.!?])\s+')
         sentences = sentence_end_pattern.split(text)
@@ -38,7 +37,6 @@ class SarvamLanguageService:
                 if len(sentence) <= max_chars:
                     current_chunk = sentence
                 else:
-                    # Fallback to word-safe chunking if sentence too long
                     words = sentence.split()
                     word_chunk = ""
                     for word in words:
@@ -59,10 +57,11 @@ class SarvamLanguageService:
 
     def _process_in_parallel(self, chunks, worker_func):
         results = [None] * len(chunks)
+        current_ctx = contextvars.copy_context()
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
-                executor.submit(worker_func, chunks[i]): i
+                executor.submit(current_ctx.run, worker_func, chunks[i]): i
                 for i in range(len(chunks))
             }
 
@@ -74,37 +73,58 @@ class SarvamLanguageService:
 
     def _execute_text_task(
             self, method_name, response_attr, chunks, base_kwargs_builder, extra_kwargs=None,
+            pricing_key="sarvam-translate",voice_provider=None
     ):
         try:
             extra_kwargs = extra_kwargs or {}
 
             def worker(chunk):
-                try:
-                    base_kwargs = base_kwargs_builder(chunk)
+                with langfuse.start_as_current_observation(
+                    as_type="generation",
+                    name=f"sarvam_{method_name}_chunk",
+                    model=pricing_key,
+                    input={"chunk_preview": chunk[:200], "chunk_chars": len(chunk)},
+                ) as gen:
+                    try:
+                        base_kwargs = base_kwargs_builder(chunk)
 
-                    def normalize_value(v):
-                        if isinstance(v, str) and v.lower() in ("true", "false"):
-                            return v.lower() == "true"
-                        return v
+                        def normalize_value(v):
+                            if isinstance(v, str) and v.lower() in ("true", "false"):
+                                return v.lower() == "true"
+                            return v
 
-                    kwargs = {
-                        **base_kwargs,
-                        **{
-                            k: normalize_value(v)
-                            for k, v in extra_kwargs.items()
-                            if v is not None
-                        },
-                    }
+                        kwargs = {
+                            **base_kwargs,
+                            **{
+                                k: normalize_value(v)
+                                for k, v in extra_kwargs.items()
+                                if v is not None
+                            },
+                        }
 
-                    method = getattr(self.client.text, method_name)
-                    response = method(**kwargs)
-                    logger.info(f"Response {response}")
+                        method = getattr(self.client.text, method_name)
+                        response = method(**kwargs)
+                        logger.info(f"Response {response}")
 
-                    return getattr(response, response_attr, chunk)
+                        result_text = getattr(response, response_attr, chunk)
 
-                except Exception:
-                    logger.error(f"{method_name} error")
-                    return chunk
+                        # usage_details, cost_details = compute_translate_usage_and_cost(pricing_key, len(chunk))
+                        usage_details, cost_details = compute_translate_usage_and_cost(
+                                                               pricing_key, len(chunk),
+                                                               voice_provider=voice_provider,
+                                                               company_bot=getattr(voice_provider, 'company_bot', None),
+                                                        )
+                        gen.update(
+                            output={"result_preview": str(result_text)[:200]},
+                            usage_details=usage_details,
+                            cost_details=cost_details,
+                        )
+                        return result_text
+
+                    except Exception as e:
+                        logger.error(f"{method_name} error")
+                        gen.update(output=None, level="ERROR", status_message=str(e))
+                        return chunk
 
             return self._process_in_parallel(chunks, worker)
 
@@ -126,9 +146,12 @@ class SarvamLanguageService:
                 "target_language_code": target_lang,
             }
 
-        return {
-            "status": 200,
-            "content": self._execute_text_task(
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="sarvam_transliterate_batch",
+            input={"source_lang": source_lang, "target_lang": target_lang, "total_chars": len(input_text)},
+        ) as s:
+            result = self._execute_text_task(
                 method_name="transliterate",
                 response_attr="transliterated_text",
                 chunks=chunks,
@@ -138,7 +161,14 @@ class SarvamLanguageService:
                     "spoken_form": other.get("spoken_form"),
                     "spoken_form_numerals_language": other.get("spoken_form_numerals_language"),
                 },
-            ),
+                pricing_key="sarvam-transliterate",
+                voice_provider=voice_provider
+            )
+            s.update(output={"result_preview": result[:200], "chunk_count": len(chunks)})
+
+        return {
+            "status": 200,
+            "content": result,
         }
 
     def translate(self, input_text, source_lang, target_lang, max_chars=990, voice_provider=None):
@@ -155,9 +185,12 @@ class SarvamLanguageService:
                 "speaker_gender": gender,
             }
 
-        return {
-            "status": 200,
-            "content": self._execute_text_task(
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="sarvam_translate_batch",
+            input={"source_lang": source_lang, "target_lang": target_lang, "total_chars": len(input_text)},
+        ) as s:
+            result = self._execute_text_task(
                 method_name="translate",
                 response_attr="translated_text",
                 chunks=chunks,
@@ -168,5 +201,12 @@ class SarvamLanguageService:
                     "output_script": other.get("output_script"),
                     "numerals_format": other.get("numerals_format"),
                 },
-            ),
+                pricing_key="sarvam-translate",
+                voice_provider=voice_provider
+            )
+            s.update(output={"result_preview": result[:200], "chunk_count": len(chunks)})
+
+        return {
+            "status": 200,
+            "content": result,
         }

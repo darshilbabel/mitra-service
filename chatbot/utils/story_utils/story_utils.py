@@ -20,8 +20,11 @@ import asyncio
 import logging
 import traceback
 from pprint import pprint
+from chatbot.utils.langfuse_client import get_langfuse_client
+from langfuse import observe, propagate_attributes
 
 logger = logging.getLogger('django')
+langfuse = get_langfuse_client()
 
 
 def create_story_object(profile_id, session, access_token, flow, language='en'):
@@ -233,156 +236,222 @@ def get_bot_error_message(bot_vernacular, error_type):
     return data.get(error_type) or data.get("generic_error") or "Please try again!"
 
 
+# @observe wraps this as the trace root — capture_input/output disabled since access_token
+# is passed as an argument and must never be auto-serialized into a span.
+@observe(as_type="span", name="generate_story", capture_input=False, capture_output=False)
 def generate_story(profile_id, session, access_token, flow, language='en'):
     voice_provider = None
     company_bot = None
     print("Working with flow: ", flow)
-    try:
-        profile = Profile.objects.prefetch_related('profile_address').defer('password').get(id=profile_id)
 
-        profile_data = ProfileSerializer(profile).data
-        company_chats = CompanyChat.objects.select_related('sender', 'receiver').filter(session=session).order_by('created_at').values("receiver", "receiver__id", "translated_message", "message", "status", "created_at")
+    # Manually set input/output for the root span, excluding access_token entirely.
+    langfuse.update_current_span(
+        input={
+            "profile_id": profile_id,
+            "session": session,
+            "flow": flow,
+            "language": language,
+            # access_token intentionally excluded — never trace auth credentials
+        },
+        metadata={"flow": str(flow), "language": str(language)},
+    )
 
-        company_bot, validate_bot = get_story_company_bot_simple(flow=flow)
-
-        voice_provider = Voice.objects.filter(company_bot=company_bot, type=VoiceType.TextToText, language=language).first()
-
-        chat_session = ChatSession.objects.get(session=session)
-
-        formatted_content_prompt, formatted_story_prompt, tag_context, project_data = get_creation_promt(company_bot=company_bot, profile=profile_data)
-
-        intro_to_pass = None
-
+    # Tags every observation in this block with the flow name, for easy filtering in the Tracing UI.
+    with propagate_attributes(tags=[f"flow:{flow}"]):
         try:
-            session_company_bot = chat_session.company_bot
-            if session_company_bot:
-                bot_vernacular = BotVernacular.objects.filter(company_bot=session_company_bot).first()
-                if bot_vernacular:
-                    if access_token:
-                        intro_to_pass = bot_vernacular.introductory_message
-                        if profile_data and profile_data.get("first_name") and intro_to_pass:
-                            words = intro_to_pass.split(" ", 1)
-                            if len(words) > 1:
-                                intro_to_pass = f"{words[0]} {profile_data.get('first_name')} {words[1]}"
-                            else:
-                                intro_to_pass = f"{words[0]} {profile_data.get('first_name')}"
-                    else:
-                        intro_to_pass = bot_vernacular.alt_introductory_message
+            profile = Profile.objects.prefetch_related('profile_address').defer('password').get(id=profile_id)
+
+            profile_data = ProfileSerializer(profile).data
+            company_chats = CompanyChat.objects.select_related('sender', 'receiver').filter(session=session).order_by('created_at').values("receiver", "receiver__id", "translated_message", "message", "status", "created_at")
+
+            # Span: resolving the story-generation and validation bots configured for this flow.
+            with langfuse.start_as_current_observation(
+                as_type="span", name="get_story_company_bot_simple", input={"flow": flow}
+            ) as company_bot_span:
+                company_bot, validate_bot = get_story_company_bot_simple(flow=flow)
+                company_bot_span.update(output={
+                    "company_bot_id": getattr(company_bot, 'id', None),
+                    "validate_bot_id": getattr(validate_bot, 'id', None),
+                })
+
+            voice_provider = Voice.objects.filter(company_bot=company_bot, type=VoiceType.TextToText, language=language).first()
+
+            chat_session = ChatSession.objects.get(session=session)
+
+            formatted_content_prompt, formatted_story_prompt, tag_context, project_data = get_creation_promt(company_bot=company_bot, profile=profile_data)
+
+            intro_to_pass = None
+
+            try:
+                session_company_bot = chat_session.company_bot
+                if session_company_bot:
+                    bot_vernacular = BotVernacular.objects.filter(company_bot=session_company_bot).first()
+                    if bot_vernacular:
+                        if access_token:
+                            intro_to_pass = bot_vernacular.introductory_message
+                            if profile_data and profile_data.get("first_name") and intro_to_pass:
+                                words = intro_to_pass.split(" ", 1)
+                                if len(words) > 1:
+                                    intro_to_pass = f"{words[0]} {profile_data.get('first_name')} {words[1]}"
+                                else:
+                                    intro_to_pass = f"{words[0]} {profile_data.get('first_name')}"
+                        else:
+                            intro_to_pass = bot_vernacular.alt_introductory_message
+                else:
+                    raise ValueError("No bot found in the chat session")
+            except Exception as e:
+                traceback.print_exc()
+                logger.warning(f"Could not get intro for new flow {flow}: {e}")
+
+            messages = get_guided_chat(
+                company_bot=company_bot, company_chats=company_chats, intro=intro_to_pass
+            )
+
+            tool_content, tool_story = get_tool_values(company_bot=company_bot)
+
+            # Span (not generation): the actual LLM calls inside generate_story_llm already
+            # produce their own generation(s) via handle_bedrock_model/handle_openai_model
+            # in llm_script.py — this just gives visibility into this step's timing.
+            with langfuse.start_as_current_observation(
+                as_type="span",
+                name="generate_story_llm",
+                input={"company_bot_id": getattr(company_bot, 'id', None)},
+            ) as generate_story_llm_span:
+                response_json_content, response_json_story = asyncio.run(
+                    generate_story_llm(
+                        formatted_content_prompt=formatted_content_prompt, formatted_story_prompt=formatted_story_prompt,
+                        messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=company_bot
+                    )
+                )
+                generate_story_llm_span.update(output={
+                    "content_preview": str(response_json_content)[:300],
+                    "story_preview": str(response_json_story)[:300],
+                })
+
+            logger.info(f"STORY response_json_content: %s", response_json_content)
+            logger.info(f"STORY response_json_story: %s", response_json_story)
+
+            combined_reason = None
+            if validate_bot:
+                validate_content_prompt, validate_story_prompt = get_validation_prompt(
+                    response_json_story=response_json_story, validate_bot=validate_bot,
+                    response_json_content=response_json_content, tag_context=tag_context, project_data=project_data,
+                    profile=profile_data
+                )
+
+                tool_content, tool_story = get_tool_values(company_bot=validate_bot)
+
+                if company_bot.provider != validate_bot.provider:
+                    messages = get_guided_chat(company_bot=validate_bot, company_chats=company_chats, intro=intro_to_pass)
+
+                # Span: story-validation LLM pass — real generation(s) created inside validate_story_llm.
+                with langfuse.start_as_current_observation(
+                    as_type="span",
+                    name="validate_story_llm",
+                    input={"validate_bot_id": getattr(validate_bot, 'id', None), "flow": flow},
+                ) as validate_story_llm_span:
+                    response_json_story, combined_reason = asyncio.run(
+                        validate_story_llm(
+                            formatted_content_prompt=validate_content_prompt, formatted_story_prompt=validate_story_prompt,
+                            messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=validate_bot,
+                            flow=flow
+                        )
+                    )
+                    validate_story_llm_span.update(output={
+                        "story_preview": str(response_json_story)[:300],
+                        "combined_reason_preview": str(combined_reason)[:300] if combined_reason else None,
+                    })
+
             else:
-                raise ValueError("No bot found in the chat session")
+                if company_bot.provider == LLMProvider.BEDROCK_CONVERSE:
+                    for response in [response_json_content, response_json_story]:
+                        if response and isinstance(response, dict):
+                            extracted_data = response.pop("parameters", response.pop("input", None))
+                            if extracted_data and isinstance(extracted_data, dict):
+                                response.clear()
+                                response.update(extracted_data)
+
+                response_json_story = {**(response_json_content or {}), **(response_json_story or {})}
+
+            logger.info("VALIDATION STORY response_json_story: {story}".format(story=response_json_story))
+
+            # Span: persisting the generated story to the database.
+            with langfuse.start_as_current_observation(as_type="span", name="save_generic_story") as save_story_span:
+                story, problem_statement = save_generic_story(
+                    response_json_story=response_json_story, language=language, voice_provider=voice_provider,
+                    profile=profile_data, session=session, combined_reason=combined_reason, flow=flow,
+                     company_bot=company_bot
+                )
+                save_story_span.update(output={"story_id": getattr(story, 'id', None) if story else None})
+
+            if story:
+                formatted_content = get_formatted_story(story)
+                if formatted_content:
+                    story.formatted_content = formatted_content
+                    story.save(update_fields=['formatted_content'])
+
+                if language != 'en':
+                    try:
+                        translation = story.translations.get(language=language)
+                        formatted_translation_content = get_formatted_story(translation)
+                        if formatted_translation_content:
+                            translation.formatted_content = formatted_translation_content
+                            translation.save(update_fields=['formatted_content'])
+                    except StoryTranslation.DoesNotExist:
+                        pass
+
+            chat_session.session_status = ChatStatus.COMPLETED
+            chat_session.save(update_fields=['session_status'])
+            chat_session.save_title(language=language)
+
+            if flow == SessionFlowName.Reflection:
+                conversation = get_stored_conversation(company_chats=company_chats)
+                chat_history = get_stored_chathistory(company_chats=company_chats)
+            else:
+                conversation, chat_history = [], []
+
+            save_project_story(
+                story=story, profile=profile_data,
+                problem_statement=problem_statement, chat_history=chat_history, access_token=access_token,
+                project_id=None, session=session, conversation=conversation, flow=flow
+            )
+
+            story_id = story.id if story and story.id else ""
+            story_content = story.content if story and story.content else ""
+
+            # Root span's final output — this is the source of truth, since @observe's
+            # capture_output=False stops it from being overwritten after the function returns.
+            langfuse.update_current_span(output={
+                "status": "ok",
+                "story_id": story_id,
+                "story_content_length": len(story_content) if story_content else 0,
+            })
+
+            return story_id, story_content, "", ""
+
         except Exception as e:
             traceback.print_exc()
-            logger.warning(f"Could not get intro for new flow {flow}: {e}")
+            error_type = getattr(e, "code", "generic_error")
 
-        messages = get_guided_chat(
-            company_bot=company_bot, company_chats=company_chats, intro=intro_to_pass
-        )
+            if not company_bot:
+                profile = Profile.objects.filter(id=profile_id).first()
+                company_bot, validate_bot = get_story_company_bot_simple(flow=flow)
 
-        tool_content, tool_story = get_tool_values(company_bot=company_bot)
+            bot_vernacular = BotVernacular.objects.filter(company_bot=company_bot, language=language).first()
+            error_message = get_bot_error_message(bot_vernacular, error_type)
 
-        response_json_content, response_json_story = asyncio.run(
-            generate_story_llm(
-                formatted_content_prompt=formatted_content_prompt, formatted_story_prompt=formatted_story_prompt,
-                messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=company_bot
-            )
-        )
-
-        logger.info(f"STORY response_json_content: %s", response_json_content)
-        logger.info(f"STORY response_json_story: %s", response_json_story)
-
-        combined_reason = None
-        if validate_bot:
-            validate_content_prompt, validate_story_prompt = get_validation_prompt(
-                response_json_story=response_json_story, validate_bot=validate_bot,
-                response_json_content=response_json_content, tag_context=tag_context, project_data=project_data,
-                profile=profile_data
-            )
-
-            tool_content, tool_story = get_tool_values(company_bot=validate_bot)
-
-            if company_bot.provider != validate_bot.provider:
-                messages = get_guided_chat(company_bot=validate_bot, company_chats=company_chats, intro=intro_to_pass)
-
-            response_json_story, combined_reason = asyncio.run(
-                validate_story_llm(
-                    formatted_content_prompt=validate_content_prompt, formatted_story_prompt=validate_story_prompt,
-                    messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=validate_bot,
-                    flow=flow
+            if voice_provider and language != 'en':
+                error_message = translate_field(
+                    voice_provider=voice_provider, message_body=error_message, target_language=language
                 )
+
+            langfuse.update_current_span(
+                output={"status": "error", "error_type": error_type, "error_message": error_message},
+                level="ERROR",
+                status_message=str(e),
             )
 
-        else:
-            if company_bot.provider == LLMProvider.BEDROCK_CONVERSE:
-                for response in [response_json_content, response_json_story]:
-                    if response and isinstance(response, dict):
-                        extracted_data = response.pop("parameters", response.pop("input", None))
-                        if extracted_data and isinstance(extracted_data, dict):
-                            response.clear()
-                            response.update(extracted_data)
-
-            response_json_story = {**(response_json_content or {}), **(response_json_story or {})}
-
-        logger.info("VALIDATION STORY response_json_story: {story}".format(story=response_json_story))
-
-        story, problem_statement = save_generic_story(
-            response_json_story=response_json_story, language=language, voice_provider=voice_provider,
-            profile=profile_data, session=session, combined_reason=combined_reason, flow=flow,
-             company_bot=company_bot
-        )
-
-        if story:
-            formatted_content = get_formatted_story(story)
-            if formatted_content:
-                story.formatted_content = formatted_content
-                story.save(update_fields=['formatted_content'])
-
-            if language != 'en':
-                try:
-                    translation = story.translations.get(language=language)
-                    formatted_translation_content = get_formatted_story(translation)
-                    if formatted_translation_content:
-                        translation.formatted_content = formatted_translation_content
-                        translation.save(update_fields=['formatted_content'])
-                except StoryTranslation.DoesNotExist:
-                    pass
-
-        chat_session.session_status = ChatStatus.COMPLETED
-        chat_session.save(update_fields=['session_status'])
-        chat_session.save_title(language=language)
-
-        if flow == SessionFlowName.Reflection:
-            conversation = get_stored_conversation(company_chats=company_chats)
-            chat_history = get_stored_chathistory(company_chats=company_chats)
-        else:
-            conversation, chat_history = [], []
-
-        save_project_story(
-            story=story, profile=profile_data,
-            problem_statement=problem_statement, chat_history=chat_history, access_token=access_token,
-            project_id=None, session=session, conversation=conversation, flow=flow
-        )
-
-        story_id = story.id if story and story.id else ""
-        story_content = story.content if story and story.content else ""
-
-        return story_id, story_content, "", ""
-
-    except Exception as e:
-        traceback.print_exc()
-        error_type = getattr(e, "code", "generic_error")
-
-        if not company_bot:
-            profile = Profile.objects.filter(id=profile_id).first()
-            company_bot, validate_bot = get_story_company_bot_simple(flow=flow)
-
-        bot_vernacular = BotVernacular.objects.filter(company_bot=company_bot, language=language).first()
-        error_message = get_bot_error_message(bot_vernacular, error_type)
-
-        if voice_provider and language != 'en':
-            error_message = translate_field(
-                voice_provider=voice_provider, message_body=error_message, target_language=language
-            )
-        return "", "", error_message, error_type
+            return "", "", error_message, error_type
 
 
 def get_story_company_bot_simple(flow):
