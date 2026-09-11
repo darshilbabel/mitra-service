@@ -2,7 +2,7 @@ import io
 import os
 import logging
 from urllib.parse import urlparse
-from django.db import models
+from django.db import models, transaction
 from django.db.models.functions import Lower
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -360,9 +360,13 @@ def delete_story_media_file_from_s3(sender, instance, **kwargs):
     even though it never calls instance.delete()).
     """
     if instance.file:
-        _delete_s3_key(instance.file.name)
+        key = instance.file.name
     elif instance.file_url:
-        _delete_s3_key(urlparse(instance.file_url).path.lstrip('/'))
+        key = urlparse(instance.file_url).path.lstrip('/')
+    else:
+        key = None
+    if key:
+        transaction.on_commit(lambda: _delete_s3_key(key))
 
 
 class Tag(models.Model):

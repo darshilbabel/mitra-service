@@ -33,10 +33,10 @@ translation was never produced.
 
 Usage
 -----
-    python manage.py regenerate_reports_from_audit --csv orphans.csv
+    python manage.py regenerate_reports_from_s3_audit --csv orphans.csv
 
     # Different column names / a global flow override / preview only
-    python manage.py regenerate_reports_from_audit --csv orphans.csv \
+    python manage.py regenerate_reports_from_s3_audit --csv orphans.csv \
         --column story_id --flow guest-discussion --dry-run
 
 CSV expectations
@@ -164,13 +164,20 @@ class Command(BaseCommand):
                     self.stdout.write(f"  [dry-run] would create StoryMedia story_id={story_id} key={key}")
                     created += 1
                     continue
-                StoryMedia.objects.create(
+
+                _, was_created = StoryMedia.objects.get_or_create(
                     story=story,
-                    name=os.path.basename(key),
                     file_url=media_base + key,
-                    media_type=media_type_for(key),
-                    include_in_story=True,
+                    defaults={
+                        "name": os.path.basename(key),
+                        "media_type": media_type_for(key),
+                        "include_in_story": True,
+                    },
                 )
+                if not was_created:
+                    self.stdout.write(f"  story_id={story_id}: StoryMedia already exists for key={key}, skip.")
+                    continue
+                    
                 created += 1
                 logger.info(
                     "[regen_from_audit] story_id=%s created StoryMedia key=%s file_url=%s",
