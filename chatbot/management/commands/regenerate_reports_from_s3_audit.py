@@ -18,18 +18,20 @@ This command closes that loop from the CSV:
      produce it (S3_MEDIA_URL + key - see StoryMedia.get_public_url()).
      `file` is left empty; the object is not re-uploaded through Django, only
      referenced.
-  2. Delete the existing StoryTranslation row(s) for the story's session and
-     regenerate them via generate_story (--report-version 2 only), so the new
-     photo actually appears in the next translated report.
-     Story itself is untouched: create_story_object/generate_story locate the
-     existing Story by session and update it in place (see
-     chatbot/utils/story_utils/*_story_tasks.py) - there is no
-     Story.objects.create() in that path - so nothing needs to be
-     snapshotted/restored for Story, only for StoryTranslation.
+  2. Regenerate the StoryTranslation row(s) for the story's session via
+     generate_story (--report-version 2 only), so the new photo actually
+     appears in the next translated report. Nothing is deleted first:
+     generate_story -> create_generic_story_translation looks up the existing
+     StoryTranslation by (story, language) and updates it in place, only
+     creating a new row if none exists (see
+     chatbot/utils/story_utils/common/generic_story_tasks.py,
+     StoryTranslation.Meta.unique_together = ('story', 'language')). Story
+     itself is likewise located by session and updated in place - there is no
+     Story.objects.create() in that path.
 
-A story_id with no StoryTranslation row is left alone: nothing is deleted and
-generate_story is not called for it. There is nothing to regenerate if a
-translation was never produced.
+A story_id with no StoryTranslation row is left alone: generate_story is not
+called for it. There is nothing to regenerate if a translation was never
+produced.
 
 Usage
 -----
@@ -57,8 +59,8 @@ Report regeneration
 Uses generate_story (--report-version 2) exclusively - see
 chatbot/management/commands/regenerate_transliterated_reports.py for the same
 entrypoint used against a session/stage scope rather than a CSV of story ids.
-The flow-resolution, guard and snapshot/restore logic here is the same as
-that command's Step 2, restricted to StoryTranslation only.
+The flow-resolution and guard logic here is the same as that command's
+Step 2, restricted to StoryTranslation only.
 """
 
 import csv
@@ -66,7 +68,6 @@ import logging
 import os
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
 from chatbot.models import (
     ChatSession,
@@ -251,7 +252,8 @@ class Command(BaseCommand):
         return self._story_voice_cache[key]
 
     def _regenerate_translation(self, session, dry_run):
-        """Delete + regenerate StoryTranslation for one session.
+        """Regenerate StoryTranslation for one session (generate_story updates
+        the existing row in place; nothing is deleted first).
         Returns "ok", "skipped", or "failed"."""
         chat_session = ChatSession.objects.filter(session=session).first()
         if not chat_session:
@@ -301,15 +303,9 @@ class Command(BaseCommand):
 
         if dry_run:
             self.stdout.write(
-                f"  [dry-run] would delete StoryTranslation and regenerate session={session} "
-                f"flow={flow} language={language}"
+                f"  [dry-run] would regenerate session={session} flow={flow} language={language}"
             )
             return "ok"
-
-        translation_snapshot = list(StoryTranslation.objects.filter(story__session=session).values())
-        with transaction.atomic():
-            deleted, _ = StoryTranslation.objects.filter(story__session=session).delete()
-        logger.info("[regen_from_audit] session=%s deleted story_translations=%s", session, deleted)
 
         fatal_exc = None
         for attempt in range(1, self.MAX_REPORT_ATTEMPTS + 1):
@@ -349,43 +345,12 @@ class Command(BaseCommand):
             )
 
         if fatal_exc is not None:
-            self.stdout.write(self.style.ERROR(
-                f"  Exception session={session}: {fatal_exc}. Restoring original StoryTranslation from snapshot."
-            ))
+            self.stdout.write(self.style.ERROR(f"  Exception session={session}: {fatal_exc}."))
         else:
             self.stdout.write(self.style.ERROR(
-                f"  Report failed session={session} after {self.MAX_REPORT_ATTEMPTS} attempts. "
-                f"Restoring original StoryTranslation from snapshot."
+                f"  Report failed session={session} after {self.MAX_REPORT_ATTEMPTS} attempts."
             ))
-        self._restore_translation_snapshot(session, translation_snapshot)
         return "failed"
-
-    # ------------------------------------------------------------------ #
-    def _restore_translation_snapshot(self, session, translation_snapshot):
-        if not translation_snapshot:
-            return
-        try:
-            with transaction.atomic():
-                new_translations = []
-                for row in translation_snapshot:
-                    row = dict(row)
-                    row.pop("id", None)
-                    new_translations.append(StoryTranslation(**row))
-                StoryTranslation.objects.bulk_create(new_translations)
-            self.stdout.write(self.style.WARNING(f"  Restored original StoryTranslation for session={session}."))
-            logger.info(
-                "[regen_from_audit] session=%s snapshot restored, translations=%s",
-                session, len(translation_snapshot),
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.stdout.write(self.style.ERROR(
-                f"  !!! MANUAL RECOVERY NEEDED !!! session={session}: restore failed: {exc}"
-            ))
-            logger.critical(
-                "[regen_from_audit] session=%s RESTORE FAILED, StoryTranslation snapshot is about to be "
-                "lost -- manual recovery needed. error=%s translation_snapshot=%r",
-                session, exc, translation_snapshot, exc_info=True,
-            )
 
     # ------------------------------------------------------------------ #
     def _summary(self, created, skipped_no_story, regen_ok, regen_skipped, regen_failed, dry_run):
