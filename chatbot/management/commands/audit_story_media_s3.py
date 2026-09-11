@@ -26,29 +26,21 @@ One sweep of the bucket, one pass over the stories, matched on the object key.
 
   1. LIST the whole prefix once (not once per story) and group every object by
      the identifier segment of its key - the `{storyId}` the client passed to
-     the presign endpoint. That is sometimes a numeric Story.id and sometimes a
-     session token, so both are kept as raw strings and resolved against real
-     rows rather than guessed at from shape.
+     the presign endpoint, always a numeric Story.id. Any folder whose name is
+     not an integer is ignored outright: never stored, never matched, never
+     reported on.
 
-  2. Measure what share of those identifiers name a Story in THIS database.
-     Below --min-resolve the run stops without writing (see 'Before trusting a
-     full run' below).
-
-  3. For each story in scope, collect the keys its StoryMedia rows claim, from
-     both `file_url` and `file`, normalised to bare object keys. Compare that
-     set against the objects sitting under the story's identifier:
+  2. For each story in scope, collect the keys its StoryMedia rows claim, from
+     `file_url` only, normalised to bare object keys. Photos are never
+     uploaded through Django (see above) - `file` is populated only for
+     server-generated PDF rows, which are never matched against S3 objects
+     here. Compare the file_url set against the objects sitting under the
+     story's identifier:
 
        object present, row present   -> OK
        object present, no row        -> ORPHAN_IN_S3   (the ticket's bug)
        row present, object absent    -> MISSING_IN_S3
-       neither, but base64_str set   -> BASE64_ONLY
-       neither at all                -> NO_FILE_REF
-
-  4. --scan-unattributed then sweeps whatever the story pass never claimed and
-     separates "belongs to a story outside the filter" (OUT_OF_SCOPE) from
-     "names a story this database does not have" (STORY_NOT_IN_DB) from
-     "matches nothing at all" (UNATTRIBUTED_IN_S3). None of those three is a
-     finding; they exist so they cannot be mistaken for one.
+       neither                       -> NO_FILE_REF
 
 Everything is read-only: LIST against S3, SELECT against the database. The only
 file written is the CSV named by --out.
@@ -61,14 +53,10 @@ Findings, in the order they usually matter:
                    The photo exists and is unreachable: the row must be created
                    and the report regenerated. It is NOT re-uploaded - the bytes
                    are already in the bucket.
-  NO_FILE_REF      row has neither `file` nor `file_url` nor `base64_str`, so
-                   get_public_url() returns "" and the report renders
-                   <img src="">. The mirror image of ORPHAN_IN_S3 (PUT failed,
-                   POST succeeded); nothing exists to restore.
-  BASE64_ONLY      same blank render, but base64_str still holds the image.
-                   Recoverable without touching S3 history: upload the bytes,
-                   set file_url, regenerate. Split out from NO_FILE_REF because
-                   the remedy is completely different.
+  NO_FILE_REF      row has neither `file` nor `file_url`, so get_public_url()
+                   returns "" and the report renders <img src="">. The mirror
+                   image of ORPHAN_IN_S3 (PUT failed, POST succeeded); nothing
+                   exists to restore.
   MISSING_IN_S3    row references a key that is absent from the bucket.
   STALE_REPORT     image row is newer than the stored PDF row, i.e. the report
                    was rendered before the photo was recorded. Needs
@@ -78,6 +66,10 @@ Findings, in the order they usually matter:
                    without this a row referencing another environment would look
                    healthy while rendering from somewhere else.
   EXCLUDED         row and object both exist, but include_in_story is False.
+  NO_PDF_GENERATED  story has no PDF StoryMedia row, but its story_id directory
+                   exists in S3 (something was uploaded), so a report should
+                   have been generated. If the directory does not exist either,
+                   nothing is wrong with the story - it is not reported at all.
 
 Not findings - reported so they cannot be mistaken for findings:
 
@@ -92,20 +84,14 @@ Not findings - reported so they cannot be mistaken for findings:
                       under numbers that now name different stories. Excluded
                       from ORPHAN_IN_S3 because backfilling one would attach a
                       stranger's photo to a report.
-  STORY_NOT_IN_DB     object filed under a story id absent from this database -
-                      deleted story or partial dump, not an upload failure.
-  OUT_OF_SCOPE        object belongs to a story excluded by the current filters.
-  UNATTRIBUTED_IN_S3  identifier matches no story; CompanyChat.file_url is tried
-                      as a last bridge back to a session.
-
 Usage
 -----
-    # 1. Characterise a prefix and check its identifiers resolve to Stories.
+    # 1. Characterise a prefix before committing to it.
     python manage.py audit_story_media_s3 --inspect chatbot/storymedia/
 
     # 2. Every flow and cycle. Photos only is the default.
     python manage.py audit_story_media_s3 --prefix chatbot/storymedia/ \
-        --scan-unattributed --out orphans.csv
+        --out orphans.csv
 
     # 3. One flow over a date window. --flow matches ChatSession.session_type.
     python manage.py audit_story_media_s3 --prefix chatbot/storymedia/ \
@@ -160,32 +146,8 @@ the same stories through different columns, and why neither matches
 '/shikshalokam_chaupal' - the leading slash belongs to a CompanyBot route, not
 to either field.
 
---story-flow remains available for filtering Story.other_params['flow']
-directly, which is the right tool when the question is specifically about the
-value get_report_type() reads. Both output columns, session_type and
-story_flow, are written on every row so the two can be reconciled.
-
-Before trusting a full run
---------------------------
-The audit is only meaningful when the bucket and the database come from the
-SAME environment. From the bucket side there is no way to tell an object whose
-StoryMedia row was lost (the bug) from an object belonging to an environment
-this database has never seen (not a bug): both are keys with no matching row.
-So every identifier that fails to resolve becomes a false ORPHAN_IN_S3.
-
-A full run therefore measures the resolve rate itself and refuses to write
-anything below --min-resolve (default 80%). Measured on a mismatched pairing,
-3% of identifiers resolving turns into an ORPHAN_IN_S3 for essentially every
-object swept - a full page of confident, uniformly wrong findings. Printing the
-rate and trusting the reader to act on it is not enough protection for that, so
-the check sits here, where the findings are produced.
-
---inspect remains the cheap way to see the number, and its id-range comparison
-tells the two failure modes apart: a partial dump overlaps the bucket's range
-sparsely, a different environment sits in a different range. If the rate is low
-and you genuinely understand why, --min-resolve lets the run proceed, and every
-ORPHAN_IN_S3 row is stamped untrustworthy in its notes column so the caveat
-travels with the CSV instead of staying in someone's memory.
+Both output columns, session_type and story_flow, are written on every row so
+the two can be reconciled.
 
 Environment
 -----------
@@ -205,19 +167,10 @@ from datetime import datetime, time as dtime
 from urllib.parse import urlparse, unquote
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db.models import Max, Min, Q
 from django.utils import timezone
 
 from chatbot.models import ChatSession, Story, StoryMedia, MediaTypeChoices
-from chatbot.models.company_models import CompanyChat
 
-
-# The share of a bucket's identifiers that must name a Story in this database
-# before a full run is allowed to write findings. Below this the two sides are
-# not the same environment (or the dump is a subset), and every unresolved
-# identifier becomes a false ORPHAN_IN_S3. 80% is the same bar --inspect uses
-# when it calls a prefix usable, so the two cannot contradict each other.
-DEFAULT_MIN_RESOLVE = 0.8
 
 # --inspect display tuning. Constant rather than a flag: it changes what the
 # diagnostic looks like, never what it concludes, and no run has ever needed
@@ -362,8 +315,7 @@ class Command(BaseCommand):
         mistaken for a full one when someone reads only the summary."""
         parts = ["photos only" if images_only else "photos and PDFs"]
         named = [
-            ("flow", "flow"), ("story_flow", "story-flow"), ("report_type", "report-type"),
-            ("state", "state"), ("district", "district"),
+            ("flow", "flow"), ("report_type", "report-type"),
             ("session", "session"), ("story_id", "story-id"),
         ]
         scoped = [f"--{label} {opts[key]}" for key, label in named if opts.get(key)]
@@ -398,14 +350,14 @@ class Command(BaseCommand):
         parser.add_argument(
             "--prefix",
             help="Object key prefix that story uploads live under, e.g. "
-                 "'chatbot/storymedia/'. Run --discover first if unsure.",
+                 "'chatbot/storymedia/'. Run --inspect on a candidate prefix first "
+                 "if unsure.",
         )
         parser.add_argument("--bucket", help="Override S3_BUCKET_NAME.")
         parser.add_argument(
             "--inspect",
             help="Print sample keys, identifier shapes and file types under one "
-                 "prefix, and check how many identifiers actually resolve to a "
-                 "Story - then exit. Run this before committing to a --prefix.",
+                 "prefix, then exit. Run this before committing to a --prefix.",
         )
 
         # Scoping
@@ -417,17 +369,7 @@ class Command(BaseCommand):
                  "the client sent. Check the values present in the database you "
                  "are auditing rather than reusing a value from elsewhere.",
         )
-        parser.add_argument(
-            "--story-flow",
-            help="Comma-separated Story.other_params['flow'] values, e.g. "
-                 "'guest-discussion'. Filters the client-supplied JSON key that "
-                 "get_report_type() reads, rather than the session's own type. "
-                 "Prefer --flow unless you specifically mean that key; see the "
-                 "'Scoping by flow' section of this command's docstring.",
-        )
         parser.add_argument("--report-type", help="Comma-separated Story.report_type values.")
-        parser.add_argument("--state", help="Comma-separated states (case-insensitive).")
-        parser.add_argument("--district", help="Comma-separated districts (case-insensitive).")
         parser.add_argument("--session", help="Comma-separated session ids.")
         parser.add_argument("--story-id", help="Comma-separated Story ids.")
         parser.add_argument("--from", dest="date_from", help="Story.created_at >= this.")
@@ -436,34 +378,9 @@ class Command(BaseCommand):
 
         # Behaviour
         parser.add_argument(
-            "--min-resolve", type=float, default=DEFAULT_MIN_RESOLVE,
-            help=f"Refuse to run when fewer than this share of the bucket's "
-                 f"identifiers name a Story in this database (default "
-                 f"{DEFAULT_MIN_RESOLVE:.0%}). A low rate means the bucket and the "
-                 f"database are different environments, and every unresolved "
-                 f"identifier would be reported as an orphan. Lower it only after "
-                 f"reading --inspect and understanding WHY the rate is low; "
-                 f"--min-resolve 0 disables the check entirely. Runs below "
-                 f"{DEFAULT_MIN_RESOLVE:.0%} mark every ORPHAN_IN_S3 row as "
-                 f"untrustworthy in its notes column.",
-        )
-        parser.add_argument(
             "--max-objects", type=int, default=2_000_000,
             help="Abort the prefix sweep past this many objects rather than "
                  "building an unbounded in-memory index.",
-        )
-        parser.add_argument(
-            "--scan-unattributed", action="store_true",
-            help="Also sweep the whole prefix for objects whose key carries no "
-                 "numeric story id, and try to attribute them via CompanyChat.file_url.",
-        )
-        parser.add_argument(
-            "--include-pdfs", action="store_true",
-            help="Audit PDF objects as well as photos. OFF by default: the ticket "
-                 "is about missing PHOTOS, and every report regeneration writes "
-                 "another PDF into the same folder, so stale PDFs accumulate with "
-                 "no row pointing at them. Counting those as orphans can outnumber "
-                 "the real finding several times over, so opt in deliberately.",
         )
         parser.add_argument(
             "--all-rows", action="store_true",
@@ -497,11 +414,10 @@ class Command(BaseCommand):
         """
         Characterise one prefix before trusting it as --prefix.
 
-        Answers the three questions that decide whether the audit can work:
-        what the identifier segment looks like, what file types are stored, and
-        - the one that actually matters - how many of those identifiers resolve
-        to a real Story by id or session. A prefix whose identifiers resolve to
-        nothing will produce a bucketful of false orphans.
+        Answers what share of objects sit under a numeric (Story.id) folder and
+        what file types are stored. Anything under a non-numeric folder is
+        counted but never kept - the script only ever deals in integer
+        story-id folders.
         """
         from collections import Counter
 
@@ -512,6 +428,7 @@ class Command(BaseCommand):
         identifiers = set()
         examples = []
         total = 0
+        ignored = 0
 
         for key, size, _ in self.list_prefix(client, bucket, prefix):
             total += 1
@@ -520,13 +437,12 @@ class Command(BaseCommand):
                 shapes["file directly under the prefix (no identifier segment)"] += 1
             else:
                 segment = tail.split("/", 1)[0]
-                identifiers.add(segment)
                 if segment.isdigit():
+                    identifiers.add(segment)
                     shapes["numeric (Story.id shaped)"] += 1
-                elif len(segment) == 32 and segment.isalnum():
-                    shapes["32-char alphanumeric (session token shaped)"] += 1
                 else:
-                    shapes[f"other ({len(segment)} chars)"] += 1
+                    ignored += 1
+                    shapes[f"non-numeric, ignored ({len(segment)} chars)"] += 1
             extensions[(os.path.splitext(key)[1] or "<none>").lower()] += 1
             if len(examples) < samples:
                 examples.append((key, size))
@@ -538,7 +454,7 @@ class Command(BaseCommand):
         if not total:
             self.note(
                 f"No objects at all under '{prefix}'. Nothing to characterise - check\n"
-                f"the spelling, or run --discover for the real key layout.\n",
+                f"the spelling.\n",
                 self.style.WARNING)
             return
         self.stdout.write("sample keys:")
@@ -561,38 +477,10 @@ class Command(BaseCommand):
                 self.style.WARNING)
             return
 
-        by_session, by_id, resolved, rate = self.resolve_identifiers(identifiers)
-        unresolved = len(identifiers) - len(resolved)
-
         self.stdout.write(
-            f"\n{len(identifiers)} distinct identifiers under this prefix:\n"
-            f"  {len(by_session):>7}  resolve to a Story.session\n"
-            f"  {len(by_id):>7}  resolve to a Story.id\n"
-            f"  {unresolved:>7}  resolve to neither   ({rate:.0%} resolved)"
+            f"\n{len(identifiers)} distinct numeric identifiers under this prefix "
+            f"({ignored} objects under non-numeric folders ignored)\n"
         )
-        for line in self.describe_resolve_failure(identifiers, resolved):
-            self.stdout.write(line)
-
-        if rate >= 0.8:
-            self.stdout.write(self.style.SUCCESS(
-                "\nThe join holds for most objects: this prefix is usable as --prefix.\n"
-            ))
-        elif rate >= 0.2:
-            self.stdout.write(self.style.WARNING(
-                "\nOnly a minority of identifiers resolve. The prefix looks right, but\n"
-                "the database is missing most of the stories these objects belong to.\n"
-                "Every unresolved identifier would be reported as an orphan, so fix\n"
-                "the data before believing any count from a full run.\n"
-            ))
-        else:
-            self.stdout.write(self.style.ERROR(
-                "\nAlmost nothing resolves. The prefix itself may be correct, but the\n"
-                "bucket and the database are very likely from DIFFERENT ENVIRONMENTS,\n"
-                "or the dump is a small subset. Compare the id ranges above: a partial\n"
-                "dump overlaps the bucket's range sparsely, a different environment\n"
-                "usually sits in a different range. Do NOT run a full audit on this\n"
-                "pairing - it would report almost every object as an orphan.\n"
-            ))
 
     def predates_story(self, story, last_modified):
         """
@@ -620,72 +508,6 @@ class Command(BaseCommand):
             return False
         return last_modified < story.created_at
 
-    def low_confidence_note(self):
-        """
-        The caveat appended to any finding whose truth depends on the bucket and
-        the database being the same environment.
-
-        Two statuses qualify. ORPHAN_IN_S3 is "an object here has no row", which
-        is indistinguishable from "this object belongs to an environment whose
-        rows this database never had". MISSING_IN_S3 is the mirror - "a row
-        points at a key that is not here" - which is equally what you get when
-        the row's key belongs to a bucket other than the one being audited.
-        Both invert into noise on a mismatched pairing, so both carry the mark.
-        """
-        if not self.low_resolve:
-            return ""
-        return (
-            f" | UNTRUSTWORTHY: only {self.resolve_rate:.0%} of this bucket's "
-            f"identifiers resolve to a Story here, so this row may be an "
-            f"environment mismatch rather than a real finding"
-        )
-
-    def resolve_identifiers(self, identifiers):
-        """
-        How many of the bucket's identifier segments name a Story in THIS
-        database.
-
-        This is the single most important number the command computes. It is
-        what separates "the bucket and the database are the same environment"
-        from "they are not", and every ORPHAN_IN_S3 depends on the answer: an
-        identifier that resolves to no Story is indistinguishable, from the
-        bucket side, from an upload whose row was lost.
-
-        Returns (by_session, by_id, resolved, rate).
-        """
-        segments = list(identifiers)
-        if not segments:
-            return set(), set(), set(), 0.0
-        numeric = [int(s) for s in segments if s.isdigit()]
-        by_session = set(
-            Story.objects.filter(session__in=segments).values_list("session", flat=True)
-        )
-        by_id = set(
-            str(i) for i in
-            Story.objects.filter(id__in=numeric).values_list("id", flat=True)
-        )
-        resolved = by_session | by_id
-        return by_session, by_id, resolved, len(resolved) / len(segments)
-
-    def describe_resolve_failure(self, identifiers, resolved):
-        """
-        The lines that separate the two ways a low resolve rate happens: a
-        partial dump overlaps the bucket's id range but sparsely, while a
-        different environment usually occupies a different range entirely.
-        """
-        lines = []
-        numeric = [int(s) for s in identifiers if s.isdigit()]
-        if numeric:
-            db_range = Story.objects.aggregate(lo=Min("id"), hi=Max("id"))
-            lines.append(f"  {'story ids in bucket':<{self.LABEL}} "
-                         f"{min(numeric)} .. {max(numeric)}")
-            lines.append(f"  {'story ids in database':<{self.LABEL}} "
-                         f"{db_range['lo']} .. {db_range['hi']}")
-        missing = sorted(set(identifiers) - resolved)[:8]
-        if missing:
-            lines.append(f"  {'not in the database':<{self.LABEL}} {', '.join(missing)}")
-        return lines
-
     def list_prefix(self, client, bucket, prefix):
         """Yield (key, size, last_modified) for every object under prefix."""
         paginator = client.get_paginator("list_objects_v2")
@@ -700,14 +522,15 @@ class Command(BaseCommand):
         Sweep the prefix once and group every object by the identifier segment in
         its key. One LIST per 1000 objects, instead of one LIST per story.
 
-        Returns (by_segment, total). Keys are the raw segment strings, kept as
-        text rather than coerced to ints: the presign endpoint writes whatever
-        the client passed as `storyId`, which is sometimes a numeric Story.id and
-        sometimes a Story.session token. Deciding which is which is the caller's
-        job, done by matching against real rows instead of guessing from shape.
+        Returns (by_segment, total). The identifier segment - the `{storyId}` the
+        presign endpoint wrote into the key - is always a numeric Story.id.
+        Anything filed under a non-numeric folder is skipped here and never
+        stored: it cannot be matched to a Story and this command has nothing to
+        say about it.
         """
         by_segment = {}
         total = 0
+        ignored = 0
 
         self.stdout.write(f"Indexing objects under {prefix} ...")
         for key, size, last_modified in self.list_prefix(client, bucket, prefix):
@@ -721,13 +544,14 @@ class Command(BaseCommand):
                 self.stdout.write(f"  ... {total} objects indexed")
 
             segment = key[len(prefix):].split("/", 1)[0]
-            self.stdout.write(f"Segment: {segment}")
+            if not segment.isdigit():
+                ignored += 1
+                continue
             by_segment.setdefault(segment, []).append((key, size, last_modified))
 
-        numeric = sum(1 for seg in by_segment if seg.isdigit())
         self.stdout.write(
-            f"Indexed {total} objects across {len(by_segment)} distinct identifiers "
-            f"({numeric} numeric, {len(by_segment) - numeric} non-numeric)\n"
+            f"Indexed {total - ignored} objects across {len(by_segment)} Story.id "
+            f"folders ({ignored} objects under non-numeric folders ignored)\n"
         )
         return by_segment, total
 
@@ -762,32 +586,9 @@ class Command(BaseCommand):
                 ).values("session")
             )
 
-        # Escape hatch: the raw JSON key, for when the question really is about
-        # the value get_report_type() and migration 0087 read.
-        story_flows = csv_list(opts.get("story_flow"))
-        if story_flows:
-            flow_q = Q()
-            for flow in story_flows:
-                flow_q |= Q(other_params__flow=flow)
-            qs = qs.filter(flow_q)
-
         report_types = csv_list(opts.get("report_type"))
         if report_types:
             qs = qs.filter(report_type__in=report_types)
-
-        states = csv_list(opts.get("state"))
-        if states:
-            state_q = Q()
-            for state in states:
-                state_q |= Q(state__iexact=state)
-            qs = qs.filter(state_q)
-
-        districts = csv_list(opts.get("district"))
-        if districts:
-            district_q = Q()
-            for district in districts:
-                district_q |= Q(district__iexact=district)
-            qs = qs.filter(district_q)
 
         date_from = parse_date(opts.get("date_from"))
         if date_from:
@@ -884,7 +685,7 @@ Treat this run as a plumbing test only. The counts are not findings.
 
         applied = {
             key: opts.get(key)
-            for key in ("flow", "story_flow", "report_type", "state", "district",
+            for key in ("flow", "report_type",
                         "session", "story_id", "date_from", "date_to")
             if opts.get(key)
         }
@@ -904,25 +705,11 @@ Treat this run as a plumbing test only. The counts are not findings.
                 "\n--flow matches ChatSession.session_type, e.g. "
                 "'shikshalokam_chaupal'. That column is not a closed enum, and the "
                 "values differ between environments. It is not "
-                "Story.other_params['flow'] (use --story-flow for that - note some "
-                "values such as 'guest-discussion' exist in BOTH columns and select "
-                "different stories), and it is not a CompanyBot route such as "
-                "'/shikshalokam_chaupal'. Check the values actually present in this "
-                "database."
-            ))
-        if "story_flow" in applied:
-            self.stdout.write(self.style.WARNING(
-                "\n--story-flow matches the client-supplied Story.other_params['flow'] "
-                "JSON key, which is absent on any story whose generation did not "
-                "complete. If you meant 'every session of this type', use --flow."
+                "Story.other_params['flow'], and it is not a CompanyBot route such "
+                "as '/shikshalokam_chaupal'. Check the values actually present in "
+                "this database."
             ))
         return False
-
-    # Set by the resolve-rate gate in handle(). low_resolve stays False unless
-    # --min-resolve was lowered below the default and the observed rate is under
-    # it, in which case every ORPHAN_IN_S3 row says so in its notes.
-    resolve_rate = 1.0
-    low_resolve = False
 
     # Cache of session -> ChatSession.session_type, filled one batch at a time
     # by iterate(). Every output row carries session_type so that a CSV can be
@@ -1003,10 +790,9 @@ Treat this run as a plumbing test only. The counts are not findings.
         if not prefix.endswith("/"):
             prefix += "/"
 
-        # Photos are the finding; PDFs are regeneration exhaust. Default to
-        # photos so the common run is the correct one and the noisy variant
-        # has to be asked for by name.
-        images_only = not opts["include_pdfs"]
+        # Photos are the finding; PDFs are regeneration exhaust, so this
+        # command only ever audits photos.
+        images_only = True
 
         rows = []
         counters = {
@@ -1017,9 +803,9 @@ Treat this run as a plumbing test only. The counts are not findings.
             "MISSING_IN_S3": 0,
             "EXCLUDED": 0,
             "STALE_REPORT": 0,
-            "UNATTRIBUTED_IN_S3": 0,
             "NO_FILE_REF": 0,
             "HOST_MISMATCH": 0,
+            "NO_PDF_GENERATED": 0,
         }
 
         self.banner("StoryMedia <-> S3 audit")
@@ -1057,58 +843,13 @@ Treat this run as a plumbing test only. The counts are not findings.
         for objs in object_index.values():
             all_keys.update(key for key, _, _ in objs)
 
-        # ------------------------------------------------------------ the gate
-        #
-        # From the bucket side, an identifier belonging to another environment
-        # and an identifier whose StoryMedia row was lost are the same thing: a
-        # key with no matching row. So on a mismatched pairing every unresolved
-        # identifier becomes a confident ORPHAN_IN_S3, and the run produces a
-        # full page of uniformly wrong findings. --inspect reports this number
-        # too, but a diagnostic nobody is obliged to read is not a safeguard.
         index_segments = set(object_index)
         if not index_segments:
             raise CommandError(
-                f"  No objects found under prefix '{prefix}' in bucket {bucket}.\n"
-                f"Run --discover to see the real key layout, or --inspect to "
-                f"characterise a candidate prefix."
+                f"  No objects found under prefix '{prefix}' in bucket {bucket}, or "
+                f"every object there sits under a non-numeric folder.\n"
+                f"Run --inspect on this prefix to characterise it."
             )
-
-        _, _, resolved_segments, self.resolve_rate = self.resolve_identifiers(index_segments)
-
-        self.rule("environment check")
-        self.field("identifiers in bucket", len(index_segments))
-        self.field("naming a story here", len(resolved_segments),
-                   f"({self.resolve_rate:.0%})")
-        self.field("required minimum", f"{opts['min_resolve']:.0%}")
-
-        if self.resolve_rate < opts["min_resolve"]:
-            detail = "\n".join(self.describe_resolve_failure(index_segments, resolved_segments))
-            raise CommandError(
-                f"\n"
-                f"  STOPPED - nothing was written.\n"
-                f"\n"
-                f"  This bucket and this database are not the same environment, so an\n"
-                f"  object with no row cannot be told from an object whose story this\n"
-                f"  database never had.\n"
-                f"\n"
-                f"{detail}\n"
-                f"\n"
-                f"  Fix by either:\n"
-                f"    --bucket <host>       point at this database's own bucket\n"
-                f"    restore a dump        from the environment this bucket serves\n"
-                f"\n"
-                f"  Or override, only if you know why the rate is low:\n"
-                f"    --min-resolve {max(self.resolve_rate - 0.05, 0):.2f}    every ORPHAN_IN_S3 and MISSING_IN_S3\n"
-                f"                          row is then stamped UNTRUSTWORTHY in the CSV."
-            )
-
-        self.low_resolve = self.resolve_rate < DEFAULT_MIN_RESOLVE
-        if self.low_resolve:
-            self.stdout.write("")
-            self.note(
-                f"proceeding at {self.resolve_rate:.0%} because --min-resolve was lowered - "
-                f"every\nORPHAN_IN_S3 and MISSING_IN_S3 row is stamped UNTRUSTWORTHY.",
-                self.style.WARNING)
 
         matched_segments = set()
 
@@ -1122,31 +863,24 @@ Treat this run as a plumbing test only. The counts are not findings.
                 (m for m in media_rows if m.media_type == MediaTypeChoices.PDF), None
             )
 
-            # Map every key this story's rows claim, from both file_url and file.
+            # Map every key this story's rows claim. file_url only
             key_to_media = {}
             basename_to_media = {}
             for media in media_rows:
-                for raw in (media.file_url, media.file.name if media.file else None):
-                    key = to_object_key(raw, bucket, media_base)
-                    if not key:
-                        continue
-                    key_to_media.setdefault(key, media)
-                    basename_to_media.setdefault(key.rsplit("/", 1)[-1], media)
+                key = to_object_key(media.file_url, bucket, media_base)
+                if not key:
+                    continue
+                key_to_media.setdefault(key, media)
+                basename_to_media.setdefault(key.rsplit("/", 1)[-1], media)
 
             seen_media_ids = set()
 
-            # The presign endpoint puts whatever the client sent as `storyId` into
-            # the key. In practice that is sometimes the numeric Story.id and
-            # sometimes the session token, so both are treated as identifiers.
-            identifiers = [str(story.id)]
-            if story.session:
-                identifiers.append(story.session)
-
-            story_objects = []
-            for ident in identifiers:
-                if ident in object_index:
-                    matched_segments.add(ident)
-                    story_objects.extend(object_index[ident])
+            # The presign endpoint always keys the object on the numeric
+            # Story.id the client held at upload time.
+            ident = str(story.id)
+            story_objects = object_index.get(ident, [])
+            if story_objects:
+                matched_segments.add(ident)
 
             for key, size, last_modified in story_objects:
                 if images_only and not is_image_key(key):
@@ -1177,7 +911,6 @@ Treat this run as a plumbing test only. The counts are not findings.
                             "object uploaded to S3 but no StoryMedia row references it - "
                             "the /api/storymedia/ POST never completed"
                         )
-                        notes += self.low_confidence_note()
                 else:
                     seen_media_ids.add(media.id)
                     if not media.include_in_story and media.media_type != MediaTypeChoices.PDF:
@@ -1209,10 +942,7 @@ Treat this run as a plumbing test only. The counts are not findings.
             for media in media_rows:
                 if media.id in seen_media_ids:
                     continue
-                claimed = to_object_key(
-                    media.file_url or (media.file.name if media.file else None),
-                    bucket, media_base,
-                )
+                claimed = to_object_key(media.file_url, bucket, media_base)
                 if not claimed:
                     # Neither file nor file_url. get_public_url() returns "" for
                     # these, so story_images_page emits <img src=""> and the
@@ -1221,24 +951,11 @@ Treat this run as a plumbing test only. The counts are not findings.
                     if images_only and media.media_type == MediaTypeChoices.PDF:
                         continue
 
-                    # Whether base64_str still holds the bytes decides the
-                    # remedy, so it is checked rather than left to the reader:
-                    # with it the image can be re-uploaded and the row repaired,
-                    # without it the photo is simply gone.
-                    b64_len = len(media.base64_str or "")
-                    if b64_len:
-                        counters["BASE64_ONLY"] = counters.get("BASE64_ONLY", 0) + 1
-                        status_no_key, note_no_key = "BASE64_ONLY", (
-                            f"no file and no file_url, so the report renders a blank "
-                            f"image - but base64_str still holds {b64_len} chars, so "
-                            f"the photo is recoverable: upload it and set file_url"
-                        )
-                    else:
-                        counters["NO_FILE_REF"] = counters.get("NO_FILE_REF", 0) + 1
-                        status_no_key, note_no_key = "NO_FILE_REF", (
-                            "no file, no file_url and no base64_str - get_public_url() "
-                            "returns an empty string and nothing exists to restore"
-                        )
+                    counters["NO_FILE_REF"] = counters.get("NO_FILE_REF", 0) + 1
+                    status_no_key, note_no_key = "NO_FILE_REF", (
+                        "no file and no file_url - get_public_url() returns an "
+                        "empty string and nothing exists to restore"
+                    )
                     rows.append(self.row(
                         story, "", "", "", media, pdf_row, status_no_key, note_no_key,
                     ))
@@ -1267,8 +984,7 @@ Treat this run as a plumbing test only. The counts are not findings.
                 rows.append(self.row(
                     story, claimed, "", "", media, pdf_row, "MISSING_IN_S3",
                     "StoryMedia row points at a key that is absent from the bucket - "
-                    "row created but the PUT never landed"
-                    + self.low_confidence_note(),
+                    "row created but the PUT never landed",
                 ))
 
             # Report rendered before the image was recorded.
@@ -1282,143 +998,27 @@ Treat this run as a plumbing test only. The counts are not findings.
                         counters["STALE_REPORT"] += 1
                         rows.append(self.row(
                             story,
-                            to_object_key(media.file_url or (media.file.name if media.file else None),
-                                          bucket, media_base) or "",
+                            to_object_key(media.file_url, bucket, media_base) or "",
                             "", "", media, pdf_row, "STALE_REPORT",
                             "image row is newer than the stored PDF - the report was "
                             "rendered before this photo was recorded; needs regeneration",
                         ))
 
-        if opts["scan_unattributed"]:
-            rows.extend(self.scan_unattributed(
-                object_index, matched_segments, media_base, counters,
-                images_only=images_only,
-            ))
+            # No PDF row at all. Only a finding when the story_id directory
+            # exists in S3 - i.e. something WAS uploaded for this story, so a
+            # report should have been generated. If the directory does not
+            # exist there is nothing wrong with the story: move on.
+            if pdf_row is None and story_objects:
+                counters["NO_PDF_GENERATED"] += 1
+                rows.append(self.row(
+                    story, "", "", "", None, None, "NO_PDF_GENERATED",
+                    f"no PDF StoryMedia row for this story, but its story_id directory "
+                    f"exists in S3 ({len(story_objects)} object(s)) - report was never "
+                    f"generated",
+                ))
 
         self.write_out(rows, opts.get("out"))
         self.summarise(counters)
-
-    # -------------------------------------------------------- unattributed
-
-    def scan_unattributed(self, object_index, matched_segments, media_base, counters,
-                          images_only=False):
-        """
-        Identifiers in the bucket that no audited story claimed.
-
-        Rather than guessing from the key shape, this works by subtraction: every
-        segment the story pass matched is removed, and what remains is checked
-        against the whole Story table. A leftover that does belong to a story
-        outside the current filter is reported as OUT_OF_SCOPE, not as a finding -
-        conflating the two would manufacture orphans out of a narrow --flow.
-
-        Whatever matches no story at all is genuinely unplaceable by key, so
-        CompanyChat.file_url is tried as the last bridge back to a session.
-        """
-        leftovers = {}
-        for seg, objs in object_index.items():
-            if seg in matched_segments:
-                continue
-            # Apply the same image filter the story pass used, so the CSV does
-            # not silently mix PDFs into these buckets while excluding them
-            # everywhere else.
-            if images_only:
-                objs = [o for o in objs if is_image_key(o[0])]
-                if not objs:
-                    continue
-            leftovers[seg] = objs
-        if not leftovers:
-            return []
-
-        self.stdout.write(
-            f"\nResolving {len(leftovers)} identifiers in the bucket that no "
-            f"audited story claimed ..."
-        )
-
-        # One query instead of one per segment.
-        segments = list(leftovers)
-        numeric = [int(s) for s in segments if s.isdigit()]
-        known = Story.objects.filter(Q(session__in=segments) | Q(id__in=numeric))
-        known_by_session = {s.session: s for s in known if s.session}
-        known_by_id = {str(s.id): s for s in known}
-
-        rows = []
-        candidates = []
-        for segment, objects in leftovers.items():
-            owner = known_by_session.get(segment) or known_by_id.get(segment)
-            if owner is not None:
-                counters["OUT_OF_SCOPE"] = counters.get("OUT_OF_SCOPE", 0) + len(objects)
-                continue
-
-            # A key naming a story id that simply is not in the database is a
-            # different animal from the orphan bug: nothing was lost at upload
-            # time, the Story row itself is absent - deleted, purged, or never
-            # included in this dump. Counting these as orphans would inflate the
-            # finding enormously, so they get their own status.
-            if segment.isdigit():
-                counters["STORY_NOT_IN_DB"] = counters.get("STORY_NOT_IN_DB", 0) + len(objects)
-                for key, size, last_modified in objects:
-                    rows.append({
-                        **{col: "" for col in CSV_COLUMNS},
-                        "status": "STORY_NOT_IN_DB",
-                        "story_id": segment,
-                        "s3_key": key,
-                        "s3_size_bytes": size,
-                        "s3_last_modified": last_modified.isoformat() if last_modified else "",
-                        "notes": (
-                            "object filed under a Story.id that does not exist in this "
-                            "database - deleted story or incomplete dump, NOT the "
-                            "upload-orphan bug"
-                        ),
-                    })
-                continue
-
-            candidates.extend(objects)
-
-        for key, size, last_modified in candidates:
-            basename = key.rsplit("/", 1)[-1]
-            if StoryMedia.objects.filter(
-                Q(file_url__endswith=key) | Q(file__endswith=basename)
-            ).exists():
-                continue
-
-            chat = (
-                CompanyChat.objects
-                .filter(file_url__icontains=basename)
-                .order_by("created_at")
-                .first()
-            )
-            session = chat.session if chat else ""
-            story = Story.objects.filter(session=session).first() if session else None
-
-            counters["UNATTRIBUTED_IN_S3"] += 1
-            rows.append({
-                **{col: "" for col in CSV_COLUMNS},
-                "status": "UNATTRIBUTED_IN_S3",
-                "s3_key": key,
-                "s3_size_bytes": size,
-                "s3_last_modified": last_modified.isoformat() if last_modified else "",
-                "session": session,
-                "story_id": story.id if story else "",
-                "story_flow": (story.other_params or {}).get("flow", "") if story else "",
-                "state": story.state if story else "",
-                "district": story.district if story else "",
-                "public_url": f"{(media_base or '').rstrip('/')}/{key}" if media_base else "",
-                "notes": (
-                    "identifier in the key matches no Story; attributed via "
-                    "CompanyChat.file_url"
-                    if chat else
-                    "identifier in the key matches no Story and no CompanyChat row - "
-                    "not attributable from stored data, needs the S3 access log"
-                ),
-            })
-
-        # Fill session_type for the whole set in one query rather than inside the
-        # loop above, so the column is free relative to the work already done.
-        self.prime_session_types([r.get("session") for r in rows])
-        for r in rows:
-            r["session_type"] = self.session_type_for(r.get("session"))
-
-        return rows
 
     # ------------------------------------------------------------------ output
 
@@ -1470,12 +1070,12 @@ Treat this run as a plumbing test only. The counts are not findings.
         groups = [
             ("NEEDS ACTION", self.style.ERROR, [
                 ("ORPHAN_IN_S3", "photo in S3, no row -> create row, regenerate"),
-                ("BASE64_ONLY", "photo in base64_str -> upload, set url, regenerate"),
                 ("STALE_REPORT", "report older than the photo -> regenerate"),
                 ("HOST_MISMATCH", "row points at another host -> fix stored URL"),
+                ("NO_PDF_GENERATED", "no PDF row, story_id dir exists in S3 -> generate report"),
             ]),
             ("CANNOT BE RECOVERED", self.style.WARNING, [
-                ("NO_FILE_REF", "no key and no base64 - the photo is gone"),
+                ("NO_FILE_REF", "no key - the photo is gone"),
                 ("MISSING_IN_S3", "row names a key that is not in the bucket"),
             ]),
             ("HEALTHY", None, [
@@ -1486,9 +1086,6 @@ Treat this run as a plumbing test only. The counts are not findings.
             ]),
             ("NOT FINDINGS", None, [
                 ("PREDATES_STORY", "object older than the story - reused id"),
-                ("STORY_NOT_IN_DB", "story absent from this database"),
-                ("OUT_OF_SCOPE", "story outside the current filters"),
-                ("UNATTRIBUTED_IN_S3", "key matches no story at all"),
             ]),
         ]
 
@@ -1506,24 +1103,19 @@ Treat this run as a plumbing test only. The counts are not findings.
 
         orphans = counters.get("ORPHAN_IN_S3", 0)
         stale = counters.get("STALE_REPORT", 0)
-        base64_only = counters.get("BASE64_ONLY", 0)
+        no_pdf = counters.get("NO_PDF_GENERATED", 0)
 
         self.rule("what to do next")
-        if not (orphans or stale or base64_only):
+        if not (orphans or stale or no_pdf):
             self.note("Nothing to remediate in this scope.")
             return
         if orphans:
             self.note(f"{orphans} photo(s) are in S3 with no StoryMedia row. Create the row "
                       f"from the\nexisting key, then regenerate the report. Do NOT re-upload - "
                       f"the bytes\nare already in the bucket.")
-        if base64_only:
-            self.note(f"{base64_only} photo(s) survive only as base64_str. Upload the bytes, set "
-                      f"file_url,\nthen regenerate.")
         if stale:
             self.note(f"{stale} report(s) were rendered before their photo was recorded. "
                       f"Regeneration\nalone is enough.")
-        if self.low_resolve:
-            self.stdout.write("")
-            self.note("These counts ran below --min-resolve. Every row is stamped "
-                      "UNTRUSTWORTHY\nin the CSV - confirm the environment pairing before "
-                      "acting on them.", self.style.WARNING)
+        if no_pdf:
+            self.note(f"{no_pdf} stor(y/ies) have no PDF row but their story_id directory exists "
+                      f"in S3 -\ngenerate the report.")
