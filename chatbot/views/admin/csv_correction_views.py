@@ -1,78 +1,175 @@
 import csv
 import io
+import json
+import logging
 from collections import Counter
 
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
 from django.views.generic import TemplateView
 
 from chatbot.constants import api_responses
-from chatbot.constants.india_states import get_canonical_state
 
-CSV_REQUIRED_COLS = {"id"}   # only "id" column is mandatory
+logger = logging.getLogger('django')
 
-ERROR_REASON_COL = "error_reason"
+CSV_REQUIRED_COLS = {"id", "State", "District"}
+BLOCK_COL = "Block"
+ROLE_COL = "Role"
 
-MAPPING_REQUIRED_FIELDS = {"state", "district", "leader_category"}
+ROLE_CACHE_KEY_TEMPLATE = "csv_correction:role:{name}"
+ROLE_CACHE_TIMEOUT = 120
 
-def _get_valid_roles():
-    # Roles come from the Role master table. ProfileType (USER/MODERATOR) describes admin
-    # access levels, not reporter roles, so validating against it rejected every real
-    # value a correction CSV could carry.
-    from chatbot.models.story_models import Role
-    return {n.strip().lower() for n in Role.objects.values_list("name", flat=True) if n}
+STATUS_COL = "status"
+REMARKS_COL = "remarks"
+REPORT_COLS = (STATUS_COL, REMARKS_COL)
+
+STATUS_UPDATED = "Updated"
+STATUS_UNCHANGED = "Unchanged"
+STATUS_REJECTED = "Rejected"
+
+MAPPING_REQUIRED_FIELDS = {"state", "district"}
+
+STATE_DISTRICT_BOT_ROUTE = "/state-classification-guest-discussion"
 
 
-def _get_valid_leader_categories():
-    # Read from the LeaderCategory master table rather than scraping distinct strings out
-    # of Story.other_params, which only ever knew about values already in use.
-    from chatbot.models.story_models import LeaderCategory
-    return {n.strip().lower() for n in LeaderCategory.objects.values_list("name", flat=True) if n}
+def _load_state_district_mapping():
+    """
+    Fetch and index the state/district mapping from the CompanyBot whose route is
+    STATE_DISTRICT_BOT_ROUTE. Raises ValueError with a user-facing message on any
+    failure, so the caller can hard-fail the whole upload before touching any row.
+    """
+    from chatbot.models.company_models import CompanyBot
 
+    try:
+        bot = CompanyBot.objects.get(route=STATE_DISTRICT_BOT_ROUTE)
+    except CompanyBot.DoesNotExist:
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_BOT_NOT_FOUND)
+
+    try:
+        raw = bot.dynamic_context
+        data = raw if isinstance(raw, dict) else json.loads(raw)
+        states = data["states"]
+    except (TypeError, ValueError, KeyError):
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_MAPPING_INVALID)
+
+    state_names = set()
+    state_districts = {}
+    district_index = {}
+    try:
+        for state in states:
+            state_name = str(state["name"]).strip()
+            state_names.add(state_name)
+            district_names = {str(d["name"]).strip() for d in state.get("districts", [])}
+            state_districts[state_name] = district_names
+            for district_name in district_names:
+                district_index.setdefault(district_name, []).append(state_name)
+    except (TypeError, KeyError, AttributeError):
+        raise ValueError(api_responses.CSV_STATE_DISTRICT_MAPPING_INVALID)
+
+    return {
+        "state_names": state_names,
+        "state_districts": state_districts,
+        "district_index": district_index,
+    }
 
 
 def _extract_fields(row: dict) -> dict:
     return {
-        "id":              (row.get("id") or "").strip(),
-        "session":         (row.get("session") or "").strip(),
-        "state":           (row.get("state") or "").strip(),
-        "district":        (row.get("district") or "").strip(),
-        "block":           (row.get("block") or "").strip(),
-        "location":        (row.get("location") or "").strip(),
-        "role":            (row.get("role") or "").strip(),
-        "leader_category": (row.get("leader_category") or "").strip(),
-        "theme_name":      (row.get("theme_name") or "").strip(),
-        # Absent, empty and whitespace-only all mean "no action given", which defaults to
-        # update. Without the trailing fallback a cell of "   " would strip to "" and be
-        # rejected as an unsupported action.
-        "action":          ((row.get("action") or "").strip().lower() or "update"),
+        "id":       (row.get("id") or "").strip(),
+        "state":    (row.get("State") or "").strip(),
+        "district": (row.get("District") or "").strip(),
+        "block":    (row.get(BLOCK_COL) or "").strip(),
+        "role":     (row.get(ROLE_COL) or "").strip(),
     }
 
 
+def _resolve_role_id(role_name: str):
+    """
+    Look up a Role's id by name, cache-aside via Redis (best-effort — a cache
+    failure falls back to the DB read rather than failing the row). Returns the
+    id, or None if no Role with that name exists.
+    """
+    from chatbot.models.story_models import Role
 
-def _validate_row(fields: dict, roles: set, leader_categories: set) -> list:
+    cache_key = ROLE_CACHE_KEY_TEMPLATE.format(name=role_name)
+
+    try:
+        cached_id = cache.get(cache_key)
+    except Exception as exc:
+        logger.error(f"CSV correction: role cache read failed for '{role_name}': {exc}", exc_info=True)
+        cached_id = None
+
+    if cached_id is not None:
+        return cached_id
+
+    role_id = Role.objects.filter(name=role_name).values_list("id", flat=True).first()
+    if role_id is None:
+        return None
+
+    try:
+        cache.set(cache_key, role_id, timeout=ROLE_CACHE_TIMEOUT)
+    except Exception as exc:
+        logger.error(f"CSV correction: role cache write failed for '{role_name}': {exc}", exc_info=True)
+
+    return role_id
+
+
+def _validate_row(fields: dict, mapping: dict) -> list:
     errors = []
 
     state_val = fields["state"]
-    role_val  = fields["role"]
-    lc_val    = fields["leader_category"]
+    district_val = fields["district"]
+    role_val = fields["role"]
+
+    if role_val:
+        role_id = _resolve_role_id(role_val)
+        if role_id is None:
+            errors.append(api_responses.CSV_ROW_UNKNOWN_ROLE_TEMPLATE.format(role=role_val))
+        else:
+            fields["role_id"] = role_id
+
+    if not state_val and not district_val:
+        return errors
+
+    if state_val and state_val not in mapping["state_names"]:
+        errors.append(api_responses.CSV_ROW_UNKNOWN_STATE_TEMPLATE.format(state=state_val))
+        return errors
+
+    if not district_val:
+        return errors
 
     if state_val:
-        if get_canonical_state(state_val) is None:
+        if district_val not in mapping["state_districts"].get(state_val, set()):
+            actual_states = mapping["district_index"].get(district_val)
+            if actual_states:
+                errors.append(
+                    api_responses.CSV_ROW_DISTRICT_WRONG_STATE_TEMPLATE.format(
+                        district=district_val,
+                        actual_states=", ".join(sorted(actual_states)),
+                        state=state_val,
+                    )
+                )
+            else:
+                errors.append(
+                    api_responses.CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE.format(district=district_val)
+                )
+    else:
+        candidate_states = mapping["district_index"].get(district_val)
+        if not candidate_states:
             errors.append(
-                api_responses.CSV_ROW_INVALID_STATE_TEMPLATE.format(state=state_val)
+                api_responses.CSV_ROW_UNKNOWN_DISTRICT_TEMPLATE.format(district=district_val)
             )
-
-    if role_val and roles and role_val.lower() not in roles:
-        errors.append(api_responses.CSV_ROW_UNKNOWN_ROLE_TEMPLATE.format(role=role_val))
-
-    if lc_val and leader_categories and lc_val.lower() not in leader_categories:
-        errors.append(
-            api_responses.CSV_ROW_UNKNOWN_LEADER_CATEGORY_TEMPLATE.format(
-                leader_category=lc_val
+        elif len(candidate_states) > 1:
+            errors.append(
+                api_responses.CSV_ROW_AMBIGUOUS_DISTRICT_TEMPLATE.format(
+                    district=district_val,
+                    candidate_states=", ".join(sorted(candidate_states)),
+                )
             )
-        )
+        else:
+            fields["state"] = candidate_states[0]
 
     return errors
 
@@ -81,50 +178,19 @@ def _apply_to_story(story, fields: dict) -> bool:
     """Apply only the values that differ. Return True if anything changed."""
     changed = False
 
-    if fields["state"]:
-        canonical = get_canonical_state(fields["state"])
-        new_state = canonical if canonical else fields["state"]
-        if story.state != new_state:
-            story.state = new_state
-            changed = True
+    if fields["state"] and story.state != fields["state"]:
+        story.state = fields["state"]
+        changed = True
     if fields["district"] and story.district != fields["district"]:
         story.district = fields["district"]
         changed = True
     if fields["block"] and story.block != fields["block"]:
         story.block = fields["block"]
         changed = True
-    if fields["location"] and story.location != fields["location"]:
-        story.location = fields["location"]
+    role_id = fields.get("role_id")
+    if role_id is not None and story.role_id != role_id:
+        story.role_id = role_id
         changed = True
-
-    op = story.other_params or {}
-    if fields["role"] and op.get("role") != fields["role"]:
-        op["role"] = fields["role"]
-        changed = True
-    if fields["leader_category"] and op.get("leader_category") != fields["leader_category"]:
-        op["leader_category"] = fields["leader_category"]
-        changed = True
-
-    # Also resolve onto the model's foreign keys, which is what the dashboard reads.
-    # The other_params copies above are kept as-is: _update_mapping_stage() derives the
-    # story stage from op['leader_category'], so dropping them would change that result.
-    from chatbot.models.story_models import LeaderCategory, Role
-
-    if fields["role"]:
-        role_obj = Role.objects.filter(name__iexact=fields["role"]).first()
-        if role_obj and story.role_id != role_obj.id:
-            story.role = role_obj
-            changed = True
-    if fields["leader_category"]:
-        lc_obj = LeaderCategory.objects.filter(name__iexact=fields["leader_category"]).first()
-        if lc_obj and story.leader_category_id != lc_obj.id:
-            story.leader_category = lc_obj
-            changed = True
-
-    if fields["theme_name"] and op.get("theme_name") != fields["theme_name"]:
-        op["theme_name"] = fields["theme_name"]
-        changed = True
-    story.other_params = op
 
     if changed:
         _update_mapping_stage(story)
@@ -134,14 +200,8 @@ def _apply_to_story(story, fields: dict) -> bool:
 
 def _update_mapping_stage(story):
     from chatbot.models.enums import StoryStatusChoices
-    op = story.other_params or {}
 
-    def _has(f):
-        if f in ("state", "district", "block", "location"):
-            return bool(getattr(story, f, None))
-        return bool(op.get(f))
-
-    fully_mapped = all(_has(f) for f in MAPPING_REQUIRED_FIELDS)
+    fully_mapped = all(getattr(story, f, None) for f in MAPPING_REQUIRED_FIELDS)
     story.stage = StoryStatusChoices.COMPLETED if fully_mapped else StoryStatusChoices.PENDING
 
 
@@ -149,7 +209,7 @@ def _neutralise_formula(value):
     """
     Stop a spreadsheet from evaluating uploaded text as a formula.
 
-    The rejection file echoes back cells the uploader supplied, so a value such as
+    The report file echoes back cells the uploader supplied, so a value such as
     =cmd|'/c calc'!A1 would execute when the file is opened in Excel or Sheets. Prefixing
     with an apostrophe makes the cell literal text; the apostrophe is not displayed.
     """
@@ -159,17 +219,17 @@ def _neutralise_formula(value):
     return text
 
 
-def _build_rejection_csv(rejected_rows: list, original_headers: list) -> str:
-    headers = [h for h in original_headers if h != ERROR_REASON_COL]
-    headers.append(ERROR_REASON_COL)
+def _build_report_csv(report_rows: list, original_headers: list) -> str:
+    headers = list(original_headers) + list(REPORT_COLS)
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers, extrasaction="ignore")
     # Headers come from the uploaded file too, so they need the same treatment. The
     # fieldnames stay unchanged so DictWriter can still map each row's keys.
     writer.writerow({h: _neutralise_formula(h) for h in headers})
-    for item in rejected_rows:
+    for item in report_rows:
         row = {k: _neutralise_formula(v) for k, v in dict(item["row"]).items()}
-        row[ERROR_REASON_COL] = _neutralise_formula(item["error"])
+        row[STATUS_COL] = _neutralise_formula(item["status"])
+        row[REMARKS_COL] = _neutralise_formula(item["remark"])
         writer.writerow(row)
     return output.getvalue()
 
@@ -179,8 +239,8 @@ class CsvCorrectionView(TemplateView):
     """
     Admin screen for correcting report metadata in bulk from an uploaded CSV.
     GET renders the upload page; POST validates every row against the master data before
-    committing anything, then returns a summary and, where rows failed, a rejection file
-    carrying the reason for each. Requires the Story change permission, not merely staff
+    committing anything, then returns a summary and a per-row report file covering every
+    uploaded id, with its outcome and remark. Requires the Story change permission, not merely staff
     access, because a single upload can rewrite every report in the database.
     """
 
@@ -219,13 +279,15 @@ class CsvCorrectionView(TemplateView):
         except Exception as exc:
             return JsonResponse({"success": False, "error": api_responses.CSV_PARSE_FAILED_TEMPLATE.format(error=exc)}, status=400)
 
-        original_headers = [h for h in headers if h != ERROR_REASON_COL]
+        original_headers = [h for h in headers if h not in REPORT_COLS]
 
         missing = CSV_REQUIRED_COLS - set(original_headers)
         if missing:
             return JsonResponse(
                 {"success": False,
-                 "error": api_responses.CSV_MISSING_ID_COLUMN},
+                 "error": api_responses.CSV_MISSING_COLUMNS_TEMPLATE.format(
+                     columns=", ".join(sorted(missing))
+                 )},
                 status=400,
             )
 
@@ -247,27 +309,23 @@ class CsvCorrectionView(TemplateView):
                 status=400,
             )
 
-        roles             = _get_valid_roles()
-        leader_categories = _get_valid_leader_categories()
+        try:
+            mapping = _load_state_district_mapping()
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
 
         from chatbot.models.story_models import Story
 
-        processed = successful = unchanged = 0
-        rejected_rows = []
+        processed = successful = unchanged = rejected = 0
+        report_rows = []
 
         for row in rows:
             fields = _extract_fields(row)
 
-            if fields["action"] == "ignore":
-                processed += 1
-                continue
-            if fields["action"] != "update":
-                # A typo such as 'updtae' used to be skipped silently - not counted, not
-                # rejected - so the upload reported success while the correction was
-                # never applied.
-                processed += 1
-                rejected_rows.append(
-                    {"row": row, "error": api_responses.CSV_ROW_INVALID_ACTION}
+            if not fields["state"] and not fields["district"] and not fields["block"] and not fields["role"]:
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_ALL_FIELDS_BLANK}
                 )
                 continue
 
@@ -275,48 +333,64 @@ class CsvCorrectionView(TemplateView):
 
             raw_id = fields["id"]
             if not raw_id:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_ID_EMPTY})
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": api_responses.CSV_ROW_ID_EMPTY}
+                )
                 continue
 
-            errors = _validate_row(fields, roles, leader_categories)
+            errors = _validate_row(fields, mapping)
             if errors:
-                rejected_rows.append({"row": row, "error": "; ".join(errors)})
+                rejected += 1
+                report_rows.append(
+                    {"row": row, "status": STATUS_REJECTED, "remark": "; ".join(errors)}
+                )
                 continue
 
-            story = None
             try:
                 story = Story.objects.get(pk=int(raw_id))
             except (ValueError, TypeError, Story.DoesNotExist):
-                pass
-
-            if story is None:
-                session_val = fields["session"] or raw_id
-                try:
-                    story = Story.objects.get(session=session_val)
-                except Story.DoesNotExist:
-                    rejected_rows.append(
-                        {"row": row, "error": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id)}
-                    )
-                    continue
-                except Exception as exc:
-                    rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc)})
-                    continue
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_STORY_NOT_FOUND_TEMPLATE.format(story_id=raw_id),
+                })
+                continue
+            except Exception as exc:
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_DB_ERROR_TEMPLATE.format(error=exc),
+                })
+                continue
 
             if not _apply_to_story(story, fields):
                 unchanged += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_UNCHANGED,
+                    "remark": api_responses.CSV_ROW_UNCHANGED,
+                })
                 continue
 
             try:
+                story.full_clean()
                 story.save()
                 successful += 1
+                report_rows.append({"row": row, "status": STATUS_UPDATED, "remark": ""})
             except Exception as exc:
-                rejected_rows.append({"row": row, "error": api_responses.CSV_ROW_SAVE_FAILED_TEMPLATE.format(error=exc)})
+                rejected += 1
+                report_rows.append({
+                    "row": row,
+                    "status": STATUS_REJECTED,
+                    "remark": api_responses.CSV_ROW_SAVE_FAILED_TEMPLATE.format(error=exc),
+                })
 
-        rejection_csv_b64 = None
-        if rejected_rows:
-            import base64
-            rej = _build_rejection_csv(rejected_rows, original_headers)
-            rejection_csv_b64 = base64.b64encode(rej.encode("utf-8")).decode("ascii")
+        import base64
+        report = _build_report_csv(report_rows, original_headers)
+        report_csv_b64 = base64.b64encode(report.encode("utf-8")).decode("ascii")
 
         return JsonResponse({
             "success": True,
@@ -324,8 +398,8 @@ class CsvCorrectionView(TemplateView):
                 "total_processed": processed,
                 "successful_updates": successful,
                 "unchanged_rows": unchanged,
-                "rejected_rows": len(rejected_rows),
+                "rejected_rows": rejected,
             },
-            "rejection_csv": rejection_csv_b64,
-            "rejection_count": len(rejected_rows),
+            "report_csv": report_csv_b64,
+            "report_count": len(report_rows),
         })
