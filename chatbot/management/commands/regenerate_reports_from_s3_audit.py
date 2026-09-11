@@ -29,9 +29,10 @@ This command closes that loop from the CSV:
      itself is likewise located by session and updated in place - there is no
      Story.objects.create() in that path.
 
-A story_id with no StoryTranslation row is left alone: generate_story is not
-called for it. There is nothing to regenerate if a translation was never
-produced.
+generate_story is called for every story_id with a Story row, regardless of
+whether a StoryTranslation exists yet - PDF rendering (get_story_html) reads
+from Story directly for English and falls back to Story if a translation is
+missing, and create_generic_story_translation creates the row when absent.
 
 Usage
 -----
@@ -77,7 +78,6 @@ from chatbot.models import (
     SessionFlowName,
     Story,
     StoryMedia,
-    StoryTranslation,
     Voice,
     VoiceType,
 )
@@ -259,11 +259,6 @@ class Command(BaseCommand):
         if not chat_session:
             self.stdout.write(self.style.WARNING(f"  session={session}: ChatSession missing, skip regen."))
             logger.error("[regen_from_audit] session=%s SKIPPED: ChatSession row missing", session)
-            return "skipped"
-
-        if not StoryTranslation.objects.filter(story__session=session).exists():
-            self.stdout.write(f"  session={session}: no StoryTranslation, skip regen.")
-            logger.info("[regen_from_audit] session=%s skipped: no StoryTranslation", session)
             return "skipped"
 
         profile_id = chat_session.profile_id
