@@ -3,7 +3,9 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    UV_PROJECT_ENVIRONMENT=/app/backend/.venv \
+    PATH="/app/backend/.venv/bin:$PATH"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,22 +16,28 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libssl-dev \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Set working directory
 WORKDIR /app
 
 RUN mkdir -p /app/backend
 
-# Copy requirements file
-COPY requirement.txt /app/backend
+# Copy dependency manifests
+COPY pyproject.toml uv.lock /app/backend/
 
-# Install Python dependencies with increased timeout and retries
-RUN cd /app/backend && pip install --no-cache-dir --upgrade pip --default-timeout=100 && \
-    pip install --no-cache-dir --default-timeout=100 --retries 5 -r requirement.txt
+# Create venv and install deps (no project code yet, for layer caching)
+RUN cd /app/backend && uv venv && uv sync --frozen --no-install-project
 
 # Copy project files
 COPY . /app/backend
+
+# Sync project itself now that source is present
+RUN cd /app/backend && uv sync --frozen
 
 # Create logs directory
 RUN mkdir -p /app/backend/logs
