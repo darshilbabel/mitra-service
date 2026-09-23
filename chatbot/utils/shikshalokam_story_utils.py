@@ -420,6 +420,11 @@ def get_html_from_template(story, profile, flow, auth=False, language=None):
         render_params.get("story", {})["content"] = translated_story.content
         render_params.get("story", {})["location"] = translated_story.location
         render_params.get("story", {})["other_params"] = translated_story.other_params
+        render_params.get("story", {})["objective"] = translated_story.objective
+        render_params.get("story", {})["action_steps"] = translated_story.action_steps
+        render_params.get("story", {})["impact"] = translated_story.impact
+        render_params.get("story", {})["blurb"] = translated_story.blurb
+        render_params.get("story", {})["micro_improvement"] = translated_story.micro_improvement
 
     template = Template(jinja_template)
     html_content = template.render(**render_params)
