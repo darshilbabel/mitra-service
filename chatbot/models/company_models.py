@@ -14,7 +14,8 @@ from chatbot.models.enums import (
     FeedbackChoices, CompanyBotTypeChoices, CompanyBotDynamicContextType, CompanyChatSourceChoices,
     VoiceProvider, VoiceType, LLMProvider, EntityTypeChoices, TextConversionType,
     PreProcessType, PreProcessOutputMode, PostProcessType, PostProcessOutputMode,
-    UserTypeChoices, OperationTypeChoices, BotStrategyChoices
+    UserTypeChoices, OperationTypeChoices, BotStrategyChoices,
+    ValidateMethodChoices, ValidationTypeChoices, RenderAsChoices,
 )
 
 S3_BASE_URL = os.getenv('S3_BASE_URL')
@@ -389,6 +390,48 @@ class CompanyStateMachine(models.Model):
         help_text="If True, this state will be skipped for authenticated users."
     )
 
+    validate_method = models.CharField(
+        max_length=10,
+        choices=ValidateMethodChoices.choices,
+        default=ValidateMethodChoices.NONE,
+        help_text="Who validates the user's answer: Frontend, Backend, Both, or None."
+    )
+    validation_type = models.CharField(
+        max_length=20,
+        choices=ValidationTypeChoices.choices,
+        null=True, blank=True,
+        help_text="Type of validation to apply (e.g. Multiple Choice, Text, Number, Date)."
+    )
+    render_as = models.CharField(
+        max_length=20,
+        choices=RenderAsChoices.choices,
+        null=True, blank=True,
+        help_text="How the frontend should render this question (e.g. Buttons, Dropdown)."
+    )
+
+    min_choices = models.IntegerField(
+        null=True, blank=True,
+        help_text="Minimum number of choices the user must select."
+    )
+    max_choices = models.IntegerField(
+        null=True, blank=True,
+        help_text="Maximum number of choices the user can select."
+    )
+    error_message = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            'Multilingual error messages per validation key. '
+            'e.g. [{"key": "required", "labels": {"en": {"text": "...", "audio_url": null}}}]'
+        )
+    )
+    validation_config = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            'Choices list for MULTIPLE_CHOICE validation. '
+            'e.g. {"choices": [{"key": "monthly", "label": "Monthly", "translations": {...}}]}'
+        )
+    )
+
     translations = models.JSONField(
         null=True, blank=True,
         help_text=(
@@ -451,12 +494,19 @@ class CompanyStateMachine(models.Model):
             self.postprocess_bot = None
             self.postprocess_output_mode = PostProcessOutputMode.NONE
 
+        # --- Validation: min/max choices ---
+        if self.min_choices is not None and self.max_choices is not None:
+            if self.max_choices < self.min_choices:
+                raise ValidationError({
+                    'max_choices': "Max choices must be greater than or equal to min choices."
+                })
+
     def save(self, *args, **kwargs):
         langs_to_regenerate = []
         if self.pk:
             old = CompanyStateMachine.objects.filter(pk=self.pk).values('bot_question', 'translations').first()
             self.full_clean()
-            if self.operation_type == OperationTypeChoices.LLM or self.step == 1:
+            if self.operation_type == OperationTypeChoices.LLM:
                 super().save(*args, **kwargs)
                 return
 

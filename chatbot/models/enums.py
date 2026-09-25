@@ -555,3 +555,16 @@ class OperationTypeChoices(models.TextChoices):
     LLM = 'llm', _('LLM')
     NON_LLM = 'non_llm', _('Non-LLM')
 
+
+class ValidateMethodChoices(models.TextChoices):
+    NONE = 'NONE', _('None')
+    FE = 'FE', _('Frontend')
+
+
+class ValidationTypeChoices(models.TextChoices):
+    MULTIPLE_CHOICE = 'MULTIPLE_CHOICE', _('Multiple Choice')
+
+
+class RenderAsChoices(models.TextChoices):
+    BUTTONS = 'BUTTONS', _('Buttons')
+

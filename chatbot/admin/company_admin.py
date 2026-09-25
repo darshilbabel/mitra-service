@@ -21,6 +21,7 @@ from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
 from inline_actions.admin import InlineActionsMixin, InlineActionsModelAdminMixin
 from ..utils.admin_config.export_mixin import ExportAllFieldsMixin
+from chatbot.admin.forms import CompanyStateMachineForm
 
 logger = logging.getLogger(__name__)
 
@@ -37,28 +38,69 @@ class CompanyBotProgramMappingInline(admin.TabularInline):
     fields = ('state', 'program', 'leader_category', 'is_active')
 
 
-class CompanyStateMachineAdmin(InlineActionsMixin, admin.TabularInline):
+class CompanyStateMachineAdmin(InlineActionsMixin, admin.StackedInline):
     model = CompanyStateMachine
+    form = CompanyStateMachineForm
     fk_name = 'company_bot'
-    extra = 1
+    extra = 0
     raw_id_fields = ['preprocess_bot', 'postprocess_bot']
-    fields = (
-        'name', 'step', 'use_stage_chats', 'text_conversion_type',
-        'bot_question', 'completion_criteria', 'context', 'tool_context',
-        'operation_type', 'skip_if_authenticated',
-        'preprocess_type', 'preprocess_prompt', 'preprocess_bot', 'preprocess_output_mode',
-        'postprocess_type', 'postprocess_prompt', 'postprocess_output_mode',
-        'skip_to_step', 'translations'
-    )
-    exclude = ('type',)  # ✅ hide type
+    exclude = ('type', 'validation_config', 'error_message')
     inline_actions = ['generate_translation', 'generate_audio', 'revoke_audio']
+    fieldsets = (
+        ('Basic Info', {
+            'fields': (
+                'name', 'step', 'operation_type',
+                'use_stage_chats', 'skip_if_authenticated', 'text_conversion_type',
+            ),
+        }),
+        ('Question & Context', {
+            'fields': ('bot_question', 'completion_criteria', 'context', 'tool_context'),
+        }),
+        ('Preprocessing', {
+            'classes': ('collapse',),
+            'fields': (
+                'preprocess_type', 'preprocess_output_mode',
+                'preprocess_prompt', 'preprocess_bot',
+            ),
+        }),
+        ('Postprocessing', {
+            'classes': ('collapse',),
+            'fields': (
+                'postprocess_type', 'postprocess_output_mode',
+                'postprocess_prompt', 'skip_to_step',
+            ),
+        }),
+        ('Validation', {
+            'classes': ('collapse',),
+            'fields': (
+                '_validation_scripts',
+                'validate_method', 'validation_type', 'render_as',
+                'errors_field',
+                'min_choices', 'max_choices',
+                'choices_field',
+            ),
+        }),
+        ('Translations', {
+            'classes': ('collapse',),
+            'fields': ('translations',),
+        }),
+        (None, {
+            'fields': ('render_inline_actions',),
+        }),
+    )
 
     class Media:
         js = ('chatbot/admin/js/confirm_revoke_audio.js',)
 
+    def get_fieldsets(self, request, obj=None):
+        self._request = request
+        return super().get_fieldsets(request, obj)
+
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.order_by('step')
+
+    # --- Question translation/audio actions ---
 
     def generate_translation(self, request, obj, parent_obj=None):
         """Inline action: async-triggers translation gen for this row only."""
@@ -66,7 +108,7 @@ class CompanyStateMachineAdmin(InlineActionsMixin, admin.TabularInline):
 
         generate_state_machine_translations.delay(parent_obj.id, state_machine_id=obj.pk)
         messages.success(
-            request, f"Translation generation started for step '{obj.name}'. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section."
+            request, f"Translation generation started for step '{obj.name}'. Refresh after 15-20 seconds."
         )
 
     generate_translation.short_description = "Generate Translations"
@@ -77,13 +119,13 @@ class CompanyStateMachineAdmin(InlineActionsMixin, admin.TabularInline):
 
         generate_state_machine_audio.delay(parent_obj.id, state_machine_id=obj.pk)
         messages.success(
-            request, f"Audio generation started for step '{obj.name}'. Please refresh your page after 15-20 seconds to see the updated JSON in the translations section."
+            request, f"Audio generation started for step '{obj.name}'. Refresh after 15-20 seconds."
         )
 
     generate_audio.short_description = "Generate Audio"
 
     def revoke_audio(self, request, obj, parent_obj=None):
-        """Inline action: deletes all cached audio_s3 files for this row from S3, strips them from translations."""
+        """Inline action: deletes all cached audio_s3 files for this row from S3."""
         from chatbot.celery_tasks.non_llm_tasks import revoke_state_machine_audio
 
         removed_langs, failed_langs = revoke_state_machine_audio(obj.pk)

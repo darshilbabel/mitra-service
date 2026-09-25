@@ -1,0 +1,6 @@
+fieldset.mc-config {
+    display: none !important;
+}
+fieldset.mc-config.mc-visible {
+    display: block !important;
+}

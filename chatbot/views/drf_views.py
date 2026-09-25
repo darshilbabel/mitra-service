@@ -48,7 +48,7 @@ class BotVernacularListCreateView(APIView):
     FIELDS = ('alt_introductory_message', 'introductory_message', 'name', 'error_message')
 
     def get(self, request, *args, **kwargs):
-        """Return vernacular fields + English default name + step-1 audio URL for given lang+bot route."""
+        """Return vernacular fields + first question from state machine for given lang+bot route."""
         language = request.query_params.get('language')
         route = request.query_params.get('company_bot__route')
 
@@ -71,11 +71,37 @@ class BotVernacularListCreateView(APIView):
         english_bot = BotVernacular.objects.filter(company_bot=bot, language='en').first()
         data['default_name'] = english_bot.name if english_bot else ""
 
+        # First question, translation, audio, and validations from state machine
         step_one = CompanyStateMachine.objects.filter(company_bot=bot, step=1).first()
-        if step_one and step_one.translations:
-            audio_url = step_one.translations.get(language, {}).get('audio_s3')
-            if audio_url:
-                data['audio_url'] = audio_url
+        if step_one:
+            data['first_bot_question'] = step_one.bot_question
+            data['operation_type'] = step_one.operation_type
+
+            cached = (step_one.translations or {}).get(language, {})
+            translated_text = cached.get('text') if language != 'en' else None
+            data['translated_bot_question'] = translated_text
+
+            # Backfill intro fields from state machine if vernacular has empty values
+            # Uses translated text when available, falls back to English bot_question
+            # Deprecated: new bots should not rely on bot vernacular for first question
+            display_text = translated_text or step_one.bot_question
+            if not data.get('introductory_message') and display_text:
+                data['introductory_message'] = display_text
+            if not data.get('alt_introductory_message') and display_text:
+                data['alt_introductory_message'] = display_text
+            data['audio_s3_url'] = cached.get('audio_s3')
+
+            from chatbot.utils.chat_utils import build_validation_response
+            data['validations'] = build_validation_response({
+                'validate_method': step_one.validate_method,
+                'validation_type': step_one.validation_type,
+                'render_as': step_one.render_as,
+                'error_message': step_one.error_message,
+                'validation_config': step_one.validation_config,
+                'translations': step_one.translations,
+                'min_choices': step_one.min_choices,
+                'max_choices': step_one.max_choices,
+            }, language=language)
 
         return Response(data)
 

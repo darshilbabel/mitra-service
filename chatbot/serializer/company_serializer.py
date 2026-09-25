@@ -22,10 +22,17 @@ class CompanyBotSerializer(serializers.ModelSerializer):
         return obj.companystatemachine_set.count()
 
     def get_state_machine_steps(self, obj):
-        """Return ordered list of {step, operation_type, bot_question} for bot's state machine."""
+        """Return ordered list of state machine step info for bot's state machine."""
         steps = CompanyStateMachine.objects.filter(company_bot=obj).order_by('step')
         return [
-            {"step": s.step, "operation_type": s.operation_type, "bot_question": s.bot_question}
+            {
+                "step": s.step,
+                "operation_type": s.operation_type,
+                "bot_question": s.bot_question,
+                "validate_method": s.validate_method,
+                "validation_type": s.validation_type,
+                "render_as": s.render_as,
+            }
             for s in steps
         ]
 

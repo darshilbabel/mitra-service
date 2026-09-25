@@ -169,3 +169,103 @@ def get_ai_profile():
     cache.set(CacheKeyEnum.AI_PROFILE, profile, timeout=1000)
     return profile
     # return Profile.objects.get(id=1)
+
+
+def build_validation_response(state_data, language="en"):
+    """
+    Build the validations dict for the FE API response.
+
+    All translations (choices, errors) are read from the single sm.translations field.
+    English source text comes from validation_config and error_message model fields.
+
+    Args:
+        state_data: dict with keys validate_method, validation_type, render_as,
+                    error_message, validation_config, translations, min_choices, max_choices.
+        language: target language code.
+
+    Returns:
+        dict matching FE validations spec, or None if no validation configured.
+    """
+    from chatbot.models.enums import ValidateMethodChoices
+
+    validate_method = state_data.get("validate_method")
+    if not validate_method or validate_method == ValidateMethodChoices.NONE:
+        return None
+
+    translations = state_data.get("translations") or {}
+    lang_translations = translations.get(language, {})
+    en_translations = translations.get("en", {})
+
+    # ── Error messages ──
+    # Returns a list of {key, text, audio_s3_url} for the requested language.
+    error_message_list = state_data.get("error_message") or []
+    translated_errors = lang_translations.get("errors", {})
+    en_errors = en_translations.get("errors", {})
+
+    error_messages = []
+    for entry in error_message_list:
+        key = entry.get("key")
+        if not key:
+            continue
+        en_text = (entry.get("labels", {}).get("en") or {}).get("text", "")
+
+        if language != "en" and key in translated_errors:
+            text = translated_errors[key].get("text", en_text)
+            audio = translated_errors[key].get("audio_s3")
+        else:
+            text = en_text
+            audio = en_errors.get(key, {}).get("audio_s3")
+
+        error_messages.append({"key": key, "text": text, "audio_s3_url": audio})
+
+    # Add default entry if not explicitly present
+    if error_messages and not any(e["key"] == "default" for e in error_messages):
+        first = error_messages[0]
+        error_messages.append({
+            "key": "default",
+            "text": first["text"],
+            "audio_s3_url": first["audio_s3_url"],
+        })
+
+    # ── Choices ──
+    validation_config = state_data.get("validation_config") or {}
+    translated_choices = lang_translations.get("choices", {})
+    en_choices = en_translations.get("choices", {})
+
+    choices = []
+    for choice in validation_config.get("choices", []):
+        key = choice.get("key")
+        label = choice.get("label")
+        if not key:
+            continue
+
+        if language != "en" and key in translated_choices:
+            display_label = translated_choices[key].get("text") or label
+            audio = translated_choices[key].get("audio_s3")
+        else:
+            display_label = label
+            audio = en_choices.get(key, {}).get("audio_s3")
+
+        choices.append({
+            "key": key,
+            "text": display_label,
+            "audio_s3_url": audio,
+        })
+
+    config = {}
+    if choices:
+        config["choices"] = choices
+    min_choices = state_data.get("min_choices")
+    max_choices = state_data.get("max_choices")
+    if min_choices is not None:
+        config["min_choices"] = min_choices
+    if max_choices is not None:
+        config["max_choices"] = max_choices
+
+    return {
+        "method": validate_method,
+        "type": state_data.get("validation_type"),
+        "render_as": state_data.get("render_as"),
+        "error_message": error_messages,
+        "config": config,
+    }
