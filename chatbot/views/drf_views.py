@@ -89,6 +89,7 @@ class BotVernacularListCreateView(APIView):
                 data['introductory_message'] = display_text
             if not data.get('alt_introductory_message') and display_text:
                 data['alt_introductory_message'] = display_text
+            data['audio_url'] = cached.get('audio_s3')  # backward compat
             data['audio_s3_url'] = cached.get('audio_s3')
 
             from chatbot.utils.chat_utils import build_validation_response

@@ -64,16 +64,17 @@ class ChoicesWidget(forms.Widget):
         widget_id = self.attrs.get("id", f"id_{name}") if self.attrs else f"id_{name}"
         input_prefix = self._input_prefix(widget_id)
 
+        # Collect all submitted indices (handles gaps from row deletion)
+        indices = sorted(
+            int(k.rsplit("_", 1)[1])
+            for k in data
+            if k.startswith(f"{input_prefix}_label_") and k.rsplit("_", 1)[1].isdigit()
+        )
         rows = []
-        idx = 0
-        while True:
-            label = data.get(f"{input_prefix}_label_{idx}")
-            if label is None:
-                break
-            label = label.strip()
+        for idx in indices:
+            label = (data.get(f"{input_prefix}_label_{idx}") or "").strip()
             if label:
                 rows.append({"key": label.lower().replace(" ", "_"), "label": label})
-            idx += 1
         return rows
 
 
@@ -120,16 +121,19 @@ class ErrorMessagesWidget(forms.Widget):
         widget_id = self.attrs.get("id", f"id_{name}") if self.attrs else f"id_{name}"
         input_prefix = self._input_prefix(widget_id)
 
+        # Collect all submitted indices (handles gaps from row deletion)
+        indices = set()
+        for k in data:
+            if k.startswith(f"{input_prefix}_key_") or k.startswith(f"{input_prefix}_label_"):
+                suffix = k.rsplit("_", 1)[1]
+                if suffix.isdigit():
+                    indices.add(int(suffix))
         rows = []
-        idx = 0
-        while True:
-            key = data.get(f"{input_prefix}_key_{idx}")
-            label = data.get(f"{input_prefix}_label_{idx}")
-            if key is None and label is None:
-                break
+        for idx in sorted(indices):
+            key = (data.get(f"{input_prefix}_key_{idx}") or "").strip()
+            label = (data.get(f"{input_prefix}_label_{idx}") or "").strip()
             if key or label:
-                rows.append({"key": (key or "").strip(), "label": (label or "").strip()})
-            idx += 1
+                rows.append({"key": key, "label": label})
         return rows
 
 

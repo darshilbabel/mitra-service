@@ -138,10 +138,15 @@ def _skip_state_machine(sm, op_type_by_step):
     return False
 
 
+_NESTED_FIELDS = {"choices", "errors"}
+
+
 def _merge_translations(state_machine_id, lang_updates):
     """
     Lock the row and merge per-language updates into sm.translations.
     lang_updates: dict of {lang: {field: value, ...}} to merge.
+    For 'choices' and 'errors' fields, deep-merges per-key entries to
+    preserve existing fields (e.g. audio_s3 when updating text).
     """
     if not lang_updates:
         return
@@ -151,7 +156,14 @@ def _merge_translations(state_machine_id, lang_updates):
         for lang, updates in lang_updates.items():
             lang_data = dict(cached.get(lang, {}))
             for field, value in updates.items():
-                lang_data[field] = value
+                if field in _NESTED_FIELDS and isinstance(value, dict):
+                    existing = lang_data.get(field, {})
+                    merged = dict(existing)
+                    for k, v in value.items():
+                        merged[k] = {**merged.get(k, {}), **v}
+                    lang_data[field] = merged
+                else:
+                    lang_data[field] = value
             cached[lang] = lang_data
         sm.translations = cached
         sm.save(update_fields=["translations"])
@@ -434,8 +446,8 @@ def revoke_state_machine_audio(state_machine_id):
         return [], list(snapshot.keys())
 
     # ── 3. Re-lock and strip only URLs that still match snapshot ──
-    removed_langs = []
-    failed_langs = []
+    removed_langs = set()
+    failed_langs = set()
 
     with transaction.atomic():
         sm = CompanyStateMachine.objects.select_for_update().get(pk=state_machine_id)
@@ -449,11 +461,12 @@ def revoke_state_machine_audio(state_machine_id):
 
             # Strip bot audio only if URL unchanged since snapshot
             snap_bot = lang_snap.get("bot")
-            if snap_bot and lang_data.get("audio_s3") == snap_bot and snap_bot in deleted_urls:
-                del lang_data["audio_s3"]
-                removed_langs.append(lang)
-            elif snap_bot and snap_bot not in deleted_urls:
-                failed_langs.append(lang)
+            if snap_bot:
+                if lang_data.get("audio_s3") == snap_bot and snap_bot in deleted_urls:
+                    del lang_data["audio_s3"]
+                    removed_langs.add(lang)
+                elif snap_bot not in deleted_urls:
+                    failed_langs.add(lang)
 
             # Strip choice audio
             snap_choices = lang_snap.get("choices", {})
@@ -464,6 +477,9 @@ def revoke_state_machine_audio(state_machine_id):
                     entry = choices.get(key)
                     if isinstance(entry, dict) and entry.get("audio_s3") == snap_url and snap_url in deleted_urls:
                         choices[key] = {k: v for k, v in entry.items() if k != "audio_s3"}
+                        removed_langs.add(lang)
+                    elif snap_url not in deleted_urls:
+                        failed_langs.add(lang)
                 lang_data["choices"] = {k: v for k, v in choices.items() if v}
                 if not lang_data["choices"]:
                     del lang_data["choices"]
@@ -477,6 +493,9 @@ def revoke_state_machine_audio(state_machine_id):
                     entry = errors.get(key)
                     if isinstance(entry, dict) and entry.get("audio_s3") == snap_url and snap_url in deleted_urls:
                         errors[key] = {k: v for k, v in entry.items() if k != "audio_s3"}
+                        removed_langs.add(lang)
+                    elif snap_url not in deleted_urls:
+                        failed_langs.add(lang)
                 lang_data["errors"] = {k: v for k, v in errors.items() if v}
                 if not lang_data["errors"]:
                     del lang_data["errors"]
@@ -489,6 +508,4 @@ def revoke_state_machine_audio(state_machine_id):
         sm.translations = cached or None
         sm.save(update_fields=["translations"])
 
-    removed_langs = list(set(removed_langs))
-    failed_langs = list(set(failed_langs))
-    return removed_langs, failed_langs
+    return list(removed_langs), list(failed_langs - removed_langs)

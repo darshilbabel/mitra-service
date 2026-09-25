@@ -3,7 +3,18 @@
   if(window._smValidationReady) return;
   window._smValidationReady=true;
 
-  // ── Utility ──
+  // ── Utility: monotonic index counter per container ──
+  function nextIdx(container){
+    var n=parseInt(container.getAttribute('data-next-idx')||'0',10);
+    // Ensure we're above any existing indices
+    container.querySelectorAll('.dyn-row input[name]').forEach(function(inp){
+      var m=inp.name.match(/_(\d+)$/);
+      if(m) n=Math.max(n,parseInt(m[1],10)+1);
+    });
+    container.setAttribute('data-next-idx',String(n+1));
+    return n;
+  }
+
   function findFieldRows(container, fieldNames){
     var rows=[];
     container.querySelectorAll('.form-group').forEach(function(g){
@@ -22,7 +33,7 @@
     var c=document.getElementById(btn.getAttribute('data-container'));
     if(!c) return;
     var prefix=c.getAttribute('data-prefix');
-    var idx=c.querySelectorAll('.dyn-row').length;
+    var idx=nextIdx(c);
     var d=document.createElement('div');
     d.className='dyn-row';
     d.style.cssText='display:flex;gap:8px;margin-bottom:4px;align-items:center;';
@@ -43,7 +54,7 @@
     var c=document.getElementById(btn.getAttribute('data-container'));
     if(!c) return;
     var prefix=c.getAttribute('data-prefix');
-    var idx=c.querySelectorAll('.dyn-row').length;
+    var idx=nextIdx(c);
     var d=document.createElement('div');
     d.className='dyn-row';
     d.style.cssText='display:flex;gap:8px;margin-bottom:4px;align-items:center;';
