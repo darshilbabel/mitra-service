@@ -92,16 +92,7 @@ class BotVernacularListCreateView(APIView):
             data['audio_s3_url'] = cached.get('audio_s3')
 
             from chatbot.utils.chat_utils import build_validation_response
-            data['validations'] = build_validation_response({
-                'validate_method': step_one.validate_method,
-                'validation_type': step_one.validation_type,
-                'render_as': step_one.render_as,
-                'error_message': step_one.error_message,
-                'validation_config': step_one.validation_config,
-                'translations': step_one.translations,
-                'min_choices': step_one.min_choices,
-                'max_choices': step_one.max_choices,
-            }, language=language)
+            data['validations'] = build_validation_response(step_one, language=language)
 
         return Response(data)
 

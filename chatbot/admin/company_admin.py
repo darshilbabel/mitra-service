@@ -73,7 +73,6 @@ class CompanyStateMachineAdmin(InlineActionsMixin, admin.StackedInline):
         ('Validation', {
             'classes': ('collapse',),
             'fields': (
-                '_validation_scripts',
                 'validate_method', 'validation_type', 'render_as',
                 'errors_field',
                 'min_choices', 'max_choices',
@@ -90,7 +89,10 @@ class CompanyStateMachineAdmin(InlineActionsMixin, admin.StackedInline):
     )
 
     class Media:
-        js = ('chatbot/admin/js/confirm_revoke_audio.js',)
+        js = (
+            'chatbot/admin/js/confirm_revoke_audio.js',
+            'chatbot/admin/js/validation_fields.js',
+        )
 
     def get_fieldsets(self, request, obj=None):
         self._request = request

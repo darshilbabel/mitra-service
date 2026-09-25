@@ -47,7 +47,7 @@ def _upload_audio_to_s3(audio_bytes, company_bot_id, state_machine_id, lang, aud
         )
         return f"{S3_MEDIA_URL}{key}"
     except Exception as e:
-        logger.info(
+        logger.warning(
             f"generate_translations: S3 upload failed for sm={state_machine_id} lang: {e}"
         )
         return None
@@ -121,9 +121,13 @@ def _resolve_generation_scope(company_bot_id, state_machine_id=None, language=No
 def _skip_state_machine(sm, op_type_by_step):
     """
     Decides whether to skip a state machine step for translation/audio generation.
-    Skips if: no bot_question AND no validation config AND no error messages.
-    In bulk mode, also skips LLM steps whose predecessor isn't NON_LLM.
+    Step 1 is never skipped (it may carry intro content from BotVernacular).
+    Other steps are skipped if they have no bot_question, no validation config,
+    and no error messages. In bulk mode, also skips LLM steps whose predecessor
+    isn't NON_LLM.
     """
+    if sm.step == 1:
+        return False
     has_content = bool(sm.bot_question) or bool(sm.validation_config) or bool(sm.error_message)
     if not has_content:
         return True
@@ -165,7 +169,7 @@ def _translate_text(company_bot, text, lang):
         if result and result.get("status") == 200:
             return result["content"]
     except Exception as e:
-        logger.info(f"generate_translations: translation failed lang={lang}: {e}")
+        logger.warning(f"generate_translations: translation failed lang={lang}: {e}")
     return None
 
 
@@ -188,7 +192,7 @@ def _generate_tts_audio(company_bot, company_bot_id, text, lang, tts_voice_map, 
                 audio_format = tts_voice.other_params.get("output_audio_codec", "wav")
             return _upload_audio_to_s3(audio_bytes, company_bot_id, s3_key_suffix, lang, audio_format)
     except Exception as e:
-        logger.info(f"generate_audio: TTS failed suffix={s3_key_suffix} lang={lang}: {e}")
+        logger.warning(f"generate_audio: TTS failed suffix={s3_key_suffix} lang={lang}: {e}")
     return None
 
 
@@ -372,49 +376,64 @@ def generate_state_machine_audio(company_bot_id, state_machine_id=None, language
 
 def revoke_state_machine_audio(state_machine_id):
     """
-    Deletes all cached audio from a CompanyStateMachine row:
-    - bot_question audio (audio_s3)
-    - choice label audio (choices.*.audio_url)
-    - error message audio (errors.*.audio_url)
-    All from S3 and from the translations JSON field.
+    Deletes all cached audio from a CompanyStateMachine row (bot_question,
+    choice labels, error messages) from S3 and from the translations JSON.
+
+    Concurrency-safe: snapshots URLs under a lock, deletes from S3 outside
+    the lock, then re-locks and only strips URLs that still match the snapshot
+    (so a concurrent generate_audio won't have its fresh URLs wiped).
+
     Returns (removed_langs, failed_langs) for bot_question audio.
     """
+    # ── 1. Snapshot all audio URLs under lock ──
     with transaction.atomic():
         sm = CompanyStateMachine.objects.select_for_update().get(pk=state_machine_id)
         translations = sm.translations
         if not translations:
             return [], []
 
-        urls_to_delete = []
-        bot_audio_snapshot = {}
-
+        # snapshot: {lang: {"bot": url, "choices": {key: url}, "errors": {key: url}}}
+        snapshot = {}
         for lang, lang_data in translations.items():
             if not isinstance(lang_data, dict):
                 continue
-
-            # Bot question audio
+            lang_snap = {}
             if lang_data.get("audio_s3"):
-                bot_audio_snapshot[lang] = lang_data["audio_s3"]
-                urls_to_delete.append(lang_data["audio_s3"])
-
-            # Choice audio
+                lang_snap["bot"] = lang_data["audio_s3"]
+            choice_urls = {}
             for key, choice_data in lang_data.get("choices", {}).items():
                 if isinstance(choice_data, dict) and choice_data.get("audio_s3"):
-                    urls_to_delete.append(choice_data["audio_s3"])
-
-            # Error audio
+                    choice_urls[key] = choice_data["audio_s3"]
+            if choice_urls:
+                lang_snap["choices"] = choice_urls
+            error_urls = {}
             for key, error_data in lang_data.get("errors", {}).items():
                 if isinstance(error_data, dict) and error_data.get("audio_s3"):
-                    urls_to_delete.append(error_data["audio_s3"])
+                    error_urls[key] = error_data["audio_s3"]
+            if error_urls:
+                lang_snap["errors"] = error_urls
+            if lang_snap:
+                snapshot[lang] = lang_snap
 
-    if not urls_to_delete:
+    if not snapshot:
         return [], []
 
-    # Delete from S3 (outside transaction — network calls)
-    for url in urls_to_delete:
-        _delete_audio_from_s3(url)
+    # ── 2. Delete from S3 outside transaction (network calls) ──
+    deleted_urls = set()
+    for lang, lang_snap in snapshot.items():
+        if "bot" in lang_snap and _delete_audio_from_s3(lang_snap["bot"]):
+            deleted_urls.add(lang_snap["bot"])
+        for url in lang_snap.get("choices", {}).values():
+            if _delete_audio_from_s3(url):
+                deleted_urls.add(url)
+        for url in lang_snap.get("errors", {}).values():
+            if _delete_audio_from_s3(url):
+                deleted_urls.add(url)
 
-    # Strip audio URLs from translations JSON
+    if not deleted_urls:
+        return [], list(snapshot.keys())
+
+    # ── 3. Re-lock and strip only URLs that still match snapshot ──
     removed_langs = []
     failed_langs = []
 
@@ -422,35 +441,42 @@ def revoke_state_machine_audio(state_machine_id):
         sm = CompanyStateMachine.objects.select_for_update().get(pk=state_machine_id)
         cached = dict(sm.translations or {})
 
-        for lang in list(cached.keys()):
+        for lang, lang_snap in snapshot.items():
             lang_data = cached.get(lang)
             if not isinstance(lang_data, dict):
                 continue
-
             lang_data = dict(lang_data)
 
-            # Strip bot audio
-            if "audio_s3" in lang_data:
+            # Strip bot audio only if URL unchanged since snapshot
+            snap_bot = lang_snap.get("bot")
+            if snap_bot and lang_data.get("audio_s3") == snap_bot and snap_bot in deleted_urls:
                 del lang_data["audio_s3"]
                 removed_langs.append(lang)
+            elif snap_bot and snap_bot not in deleted_urls:
+                failed_langs.append(lang)
 
             # Strip choice audio
+            snap_choices = lang_snap.get("choices", {})
             choices = lang_data.get("choices")
-            if isinstance(choices, dict):
-                for key in choices:
-                    if isinstance(choices[key], dict):
-                        choices[key] = {k: v for k, v in choices[key].items() if k != "audio_s3"}
-                # Remove empty choice entries
+            if isinstance(choices, dict) and snap_choices:
+                choices = dict(choices)
+                for key, snap_url in snap_choices.items():
+                    entry = choices.get(key)
+                    if isinstance(entry, dict) and entry.get("audio_s3") == snap_url and snap_url in deleted_urls:
+                        choices[key] = {k: v for k, v in entry.items() if k != "audio_s3"}
                 lang_data["choices"] = {k: v for k, v in choices.items() if v}
                 if not lang_data["choices"]:
                     del lang_data["choices"]
 
             # Strip error audio
+            snap_errors = lang_snap.get("errors", {})
             errors = lang_data.get("errors")
-            if isinstance(errors, dict):
-                for key in errors:
-                    if isinstance(errors[key], dict):
-                        errors[key] = {k: v for k, v in errors[key].items() if k != "audio_s3"}
+            if isinstance(errors, dict) and snap_errors:
+                errors = dict(errors)
+                for key, snap_url in snap_errors.items():
+                    entry = errors.get(key)
+                    if isinstance(entry, dict) and entry.get("audio_s3") == snap_url and snap_url in deleted_urls:
+                        errors[key] = {k: v for k, v in entry.items() if k != "audio_s3"}
                 lang_data["errors"] = {k: v for k, v in errors.items() if v}
                 if not lang_data["errors"]:
                     del lang_data["errors"]
@@ -464,4 +490,5 @@ def revoke_state_machine_audio(state_machine_id):
         sm.save(update_fields=["translations"])
 
     removed_langs = list(set(removed_langs))
+    failed_langs = list(set(failed_langs))
     return removed_langs, failed_langs

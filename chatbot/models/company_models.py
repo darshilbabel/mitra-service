@@ -411,10 +411,12 @@ class CompanyStateMachine(models.Model):
 
     min_choices = models.IntegerField(
         null=True, blank=True,
+        validators=[MinValueValidator(0)],
         help_text="Minimum number of choices the user must select."
     )
     max_choices = models.IntegerField(
         null=True, blank=True,
+        validators=[MinValueValidator(0)],
         help_text="Maximum number of choices the user can select."
     )
     error_message = models.JSONField(

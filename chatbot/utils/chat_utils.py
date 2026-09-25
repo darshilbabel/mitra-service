@@ -171,34 +171,36 @@ def get_ai_profile():
     # return Profile.objects.get(id=1)
 
 
+def _get_field(state_data, field):
+    """Read a field from either a model instance or a .values() dict."""
+    if isinstance(state_data, dict):
+        return state_data.get(field)
+    return getattr(state_data, field, None)
+
+
 def build_validation_response(state_data, language="en"):
     """
     Build the validations dict for the FE API response.
 
-    All translations (choices, errors) are read from the single sm.translations field.
-    English source text comes from validation_config and error_message model fields.
+    Accepts either a CompanyStateMachine model instance or a .values() dict
+    with the relevant fields. All translations (choices, errors) are read
+    from the sm.translations JSON field. English source text comes from
+    validation_config and error_message model fields.
 
-    Args:
-        state_data: dict with keys validate_method, validation_type, render_as,
-                    error_message, validation_config, translations, min_choices, max_choices.
-        language: target language code.
-
-    Returns:
-        dict matching FE validations spec, or None if no validation configured.
+    Returns dict matching FE validations spec, or None if no validation configured.
     """
     from chatbot.models.enums import ValidateMethodChoices
 
-    validate_method = state_data.get("validate_method")
+    validate_method = _get_field(state_data, "validate_method")
     if not validate_method or validate_method == ValidateMethodChoices.NONE:
         return None
 
-    translations = state_data.get("translations") or {}
+    translations = _get_field(state_data, "translations") or {}
     lang_translations = translations.get(language, {})
     en_translations = translations.get("en", {})
 
     # ── Error messages ──
-    # Returns a list of {key, text, audio_s3_url} for the requested language.
-    error_message_list = state_data.get("error_message") or []
+    error_message_list = _get_field(state_data, "error_message") or []
     translated_errors = lang_translations.get("errors", {})
     en_errors = en_translations.get("errors", {})
 
@@ -228,7 +230,7 @@ def build_validation_response(state_data, language="en"):
         })
 
     # ── Choices ──
-    validation_config = state_data.get("validation_config") or {}
+    validation_config = _get_field(state_data, "validation_config") or {}
     translated_choices = lang_translations.get("choices", {})
     en_choices = en_translations.get("choices", {})
 
@@ -255,8 +257,8 @@ def build_validation_response(state_data, language="en"):
     config = {}
     if choices:
         config["choices"] = choices
-    min_choices = state_data.get("min_choices")
-    max_choices = state_data.get("max_choices")
+    min_choices = _get_field(state_data, "min_choices")
+    max_choices = _get_field(state_data, "max_choices")
     if min_choices is not None:
         config["min_choices"] = min_choices
     if max_choices is not None:
@@ -264,8 +266,8 @@ def build_validation_response(state_data, language="en"):
 
     return {
         "method": validate_method,
-        "type": state_data.get("validation_type"),
-        "render_as": state_data.get("render_as"),
+        "type": _get_field(state_data, "validation_type"),
+        "render_as": _get_field(state_data, "render_as"),
         "error_message": error_messages,
         "config": config,
     }

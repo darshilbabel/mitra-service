@@ -190,16 +190,7 @@ def create_chatsession(request):
                     except Exception as e:
                         logger.info(f"Translation failed for first_bot_question: {e}")
 
-            first_validations = build_validation_response({
-                "validate_method": first_state.validate_method,
-                "validation_type": first_state.validation_type,
-                "render_as": first_state.render_as,
-                "error_message": first_state.error_message,
-                "validation_config": first_state.validation_config,
-                "translations": first_state.translations,
-                "min_choices": first_state.min_choices,
-                "max_choices": first_state.max_choices,
-            }, language=language)
+            first_validations = build_validation_response(first_state, language=language)
 
     logger.info(
         f"create_chatsession: session={session}, created={created}, first_bot_question={bool(first_bot_question)}"
