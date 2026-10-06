@@ -12,6 +12,8 @@ from django.db import transaction
 from chatbot.models import CompanyBot, Voice, CompanyStateMachine, Company, Profile, ProfileType, BotVernacular
 import logging
 
+from chatbot.models.story_models import Role
+
 logger = logging.getLogger('django')
 
 def generate_template(format_type):
@@ -106,6 +108,7 @@ def export_bots_json(bots):
 
         bot_data = model_to_dict(bot, exclude=['id', 'company', 'created_at', 'updated_at'])
         bot_data['company_slug'] = bot.company.slug
+        bot_data['default_role'] = bot.default_role.name
         # Add voices
         voice_data=[]
         voices = bot.voice_set.all()
@@ -204,6 +207,16 @@ def import_bots_json(request, uploaded_file):
                 except Company.DoesNotExist:
                     raise ValueError(f"Company with slug '{company_slug}' not found")
 
+                default_role = bot_data.pop('default_role')
+                role = None
+                if default_role is not None:
+                    try:
+                        if type(default_role) is int:
+                            raise ValueError("Role is an integer")
+                        role, _ = Role.objects.get_or_create(name=default_role)
+                    except Exception as e:
+                        raise ValueError(f"Failed to get or create role, Reason: {str(e)}")
+
                 # Check permissions
                 if not request.user.is_superuser:
                     if not profile or profile.profile_type != ProfileType.MODERATOR or profile.company != company:
@@ -229,6 +242,7 @@ def import_bots_json(request, uploaded_file):
                 else:
                     bot = CompanyBot.objects.create(
                         company=company,
+                        default_role=role,
                         **bot_data
                     )
                     created_count += 1
