@@ -165,8 +165,7 @@ def create_story_object(profile_id, session, access_token, flow, language='en'):
         response_json_content, response_json_story = asyncio.run(
             generate_story_llm(
                 formatted_content_prompt=formatted_content_prompt, formatted_story_prompt=formatted_story_prompt,
-                messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=company_bot,
-                flow=flow
+                messages=messages, tool_content=tool_content, tool_story=tool_story, company_bot=company_bot
             )
         )
 
