@@ -70,10 +70,10 @@ def text_speech_provider(company_bot, text, source_language):
             "company_bot_route": getattr(company_bot, 'route', None),
             "text": text,
             "source_language": source_language,
-        },    
+        },
       ) as text_speech_span:
         print("Voice Provider:", voice_provider.provider)
-        
+
         # ALL of the logic below must be indented under the 'with' statement
         if voice_provider.provider == VoiceProvider.AI4Bharat:
             response = ai4bharat_text_speech(
@@ -98,10 +98,10 @@ def text_speech_provider(company_bot, text, source_language):
                 'status': 500,
                 'content': "No provider found!"
             }
-            
+
         # Update the span before exiting the context manager
         text_speech_span.update(output={"response_status": response.get('status'), "response_content_preview": str(response.get('content'))[:300]})
-        
+
         return response
 
 def speech_text_provider(company_bot, base64, audio_format, source_language):
