@@ -7,7 +7,6 @@ from chatbot.models import CompanyChat, LLMProvider, Profile
 
 
 def format_message_as_per_openai_format(chats, intro=None):
-    ai_user = Profile.objects.values("id").get(id=1)
     if intro:
         messages = [
             {
@@ -53,7 +52,6 @@ def format_message_as_per_openai_format(chats, intro=None):
 
 
 def format_message_as_per_bedrock_format(chats, intro=None, other_info=None):
-    ai_user = Profile.objects.values("id").get(id=1)
     if intro:
         if other_info:
             user_name = other_info.get('first_name', None)
@@ -159,7 +157,7 @@ def convert_llama_to_openai_tool(llama_tool_call):
         return None
 
 
-def get_ai_profile():
+def get_ai_profile() -> Profile:
     """Return AI Profile (id=1), from cache if present, else DB."""
     cached_profile = cache.get(CacheKeyEnum.AI_PROFILE)
     if cached_profile:

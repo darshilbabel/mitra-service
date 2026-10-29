@@ -26,4 +26,5 @@ app.autodiscover_tasks([
     'chatbot.celery_tasks.free_flow_tasks',
     'chatbot.celery_tasks.post_processing_tasks',
     'chatbot.celery_tasks.non_llm_tasks',
+    'chatbot.celery_tasks.langfuse_tasks',
 ])

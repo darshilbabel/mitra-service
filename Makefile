@@ -32,3 +32,8 @@ guvicorn_run:
 	    --keep-alive 5 \
 	    --access-logfile - \
 	    --error-logfile -
+
+gotenberg_up:
+	docker run -d \
+        -p 3003:3000 --rm \
+        gotenberg/gotenberg:8

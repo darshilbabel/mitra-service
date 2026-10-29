@@ -30,10 +30,12 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('health/', health_views.health_check, name='health_check'),
     path('docs/', include_docs_urls(title='API Documentation')),
+    # path('api/v1/', include('chatbot.urls')),
     path('api/shikshalokam/', include('shikshalokam.urls')),
     re_path(r'^api/storage/upload-local/(?P<object_key>.+)$', aws_views.upload_media_local, name='upload_media_local'),
     path("", include("chatbot.urls", namespace="chatbot")),
 ]
+
 
 # Serve media files in development
 if settings.DEBUG:
