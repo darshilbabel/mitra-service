@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 import logging
 
+from chatbot.utils.langfuse_client import get_langfuse_client
+
+langfuse = get_langfuse_client()
 logger = logging.getLogger('django')
 
 
@@ -18,60 +21,76 @@ class SimplePostprocessor(BasePostprocessor):
 
     def postprocess(self, state_machine, llm_response, **kwargs):
         """Execute simple postprocessing using postprocess_prompt"""
-        if not state_machine.postprocess_prompt:
-            logger.warning(f"No postprocess_prompt defined for state {state_machine.name}")
-            return None
-
-        # Get LLM handler
-        from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
-        from chatbot.models import LLMProvider
-
         company_bot = kwargs.get('company_bot')
-        messages = kwargs.get('messages', [])
+        # Span: one-shot LLM call analysing the main LLM response with the state's postprocess_prompt —
+        # the actual generation (model, tokens, cost) is created deeper inside handle_bedrock_model / handle_openai_model.
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="simple_postprocessor.postprocess",
+            input={
+                "state_machine": state_machine.name,
+                "postprocess_prompt": state_machine.postprocess_prompt,
+                "llm_response": llm_response,
+                "provider": getattr(company_bot, 'provider', None),
+                "model": getattr(company_bot, 'llm_model', None),
+            },
+        ) as postprocess_span:
+            if not state_machine.postprocess_prompt:
+                logger.warning(f"No postprocess_prompt defined for state {state_machine.name}")
+                postprocess_span.update(output={"skipped": "no_postprocess_prompt"}, level="WARNING")
+                return None
 
-        # Add the LLM response to messages for context
-        enhanced_messages = messages.copy()
-        if llm_response:
-            enhanced_messages.append({
-                'role': 'assistant',
-                'content': str(llm_response)
-            })
+            # Get LLM handler
+            from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
+            from chatbot.models import LLMProvider
 
-        # Build simple prompt with LLM response context
-        simple_prompt = self._build_simple_prompt(
-            state_machine.postprocess_prompt, company_bot, llm_response
-        )
+            messages = kwargs.get('messages', [])
 
-        try:
-            if company_bot.provider == LLMProvider.BEDROCK_CONVERSE:
-                response = handle_bedrock_model(
-                    system_prompt=simple_prompt,
-                    messages=enhanced_messages,
-                    model_name=company_bot.llm_model,
-                    temperature=company_bot.bot_temperature,
-                    max_token=company_bot.max_token,
-                    company_bot=company_bot
-                )
-            elif company_bot.provider == LLMProvider.OPENAI:
-                response = handle_openai_model(
-                    system_prompt=simple_prompt,
-                    messages=enhanced_messages,
-                    model_name=company_bot.llm_model,
-                    temperature=company_bot.bot_temperature,
-                    max_token=company_bot.max_token,
-                    tools=None,
-                    tool_choice='auto',
-                    is_json_response=False
-                )
-            else:
-                response = None
+            # Add the LLM response to messages for context
+            enhanced_messages = messages.copy()
+            if llm_response:
+                enhanced_messages.append({
+                    'role': 'assistant',
+                    'content': str(llm_response)
+                })
 
-            logger.info(f"Simple postprocessing response for {state_machine.name}: {response}")
-            return response
+            # Build simple prompt with LLM response context
+            simple_prompt = self._build_simple_prompt(
+                state_machine.postprocess_prompt, company_bot, llm_response
+            )
 
-        except Exception as e:
-            logger.error(f"Error in simple postprocessing: {e}")
-            return None
+            try:
+                if company_bot.provider == LLMProvider.BEDROCK_CONVERSE:
+                    response = handle_bedrock_model(
+                        system_prompt=simple_prompt,
+                        messages=enhanced_messages,
+                        model_name=company_bot.llm_model,
+                        temperature=company_bot.bot_temperature,
+                        max_token=company_bot.max_token,
+                        company_bot=company_bot
+                    )
+                elif company_bot.provider == LLMProvider.OPENAI:
+                    response = handle_openai_model(
+                        system_prompt=simple_prompt,
+                        messages=enhanced_messages,
+                        model_name=company_bot.llm_model,
+                        temperature=company_bot.bot_temperature,
+                        max_token=company_bot.max_token,
+                        tools=None,
+                        tool_choice='auto',
+                        is_json_response=False
+                    )
+                else:
+                    response = None
+
+                logger.info(f"Simple postprocessing response for {state_machine.name}: {response}")
+                postprocess_span.update(output=response)
+                return response
+
+            except Exception as e:
+                logger.error(f"Error in simple postprocessing: {e}")
+                postprocess_span.update(output={"error": str(e)}, level="ERROR")
+                return None
 
     def _build_simple_prompt(self, postprocess_prompt, company_bot, llm_response):
         """Build prompt for simple postprocessing"""
@@ -89,59 +108,75 @@ class ComplexPostprocessor(BasePostprocessor):
 
     def postprocess(self, state_machine, llm_response, **kwargs):
         """Execute complex postprocessing using postprocess_bot"""
-        if not state_machine.postprocess_bot:
-            logger.warning(f"No postprocess_bot defined for state {state_machine.name}")
-            return None
+        postprocess_bot = state_machine.postprocess_bot
+        # Span: full LLM call analysing the main LLM response with the state's postprocess_bot —
+        # the actual generation (model, tokens, cost) is created deeper inside handle_bedrock_model / handle_openai_model.
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="complex_postprocessor.postprocess",
+            input={
+                "state_machine": state_machine.name,
+                "postprocess_bot": getattr(postprocess_bot, 'name', None),
+                "llm_response": llm_response,
+                "provider": getattr(postprocess_bot, 'provider', None),
+                "model": getattr(postprocess_bot, 'llm_model', None),
+            },
+        ) as postprocess_span:
+            if not postprocess_bot:
+                logger.warning(f"No postprocess_bot defined for state {state_machine.name}")
+                postprocess_span.update(output={"skipped": "no_postprocess_bot"}, level="WARNING")
+                return None
 
-        try:
-            # Use the postprocess_bot to analyze the LLM response
-            from chatbot.services.core.prompt_builder import PromptBuilder
-            from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
-            from chatbot.models import LLMProvider
-
-            postprocess_bot = state_machine.postprocess_bot
-            messages = kwargs.get('messages', [])
-
-            # Add the LLM response to messages for context
-            enhanced_messages = messages.copy()
-            if llm_response:
+            try:
+                # Use the postprocess_bot to analyze the LLM response
+                from chatbot.services.core.prompt_builder import PromptBuilder
+                from chatbot.llm_models.llm_script import handle_bedrock_model, handle_openai_model
                 from chatbot.models import LLMProvider
-                enhanced_messages.append({
-                    'role': 'assistant' if postprocess_bot.provider == LLMProvider.OPENAI else 'assistant',
-                    'content': str(llm_response)
-                })
 
-            # Build prompt using the postprocess bot's context
-            prompt_builder = PromptBuilder()
+                messages = kwargs.get('messages', [])
 
-            system_prompt = prompt_builder.build_system_prompt(postprocess_bot, None)
+                # Add the LLM response to messages for context
+                enhanced_messages = messages.copy()
+                if llm_response:
+                    from chatbot.models import LLMProvider
+                    enhanced_messages.append({
+                        'role': 'assistant' if postprocess_bot.provider == LLMProvider.OPENAI else 'assistant',
+                        'content': str(llm_response)
+                    })
 
-            if postprocess_bot.provider == LLMProvider.BEDROCK_CONVERSE:
-                response = handle_bedrock_model(
-                    system_prompt=system_prompt,
-                    messages=enhanced_messages,
-                    model_name=postprocess_bot.llm_model,
-                    temperature=postprocess_bot.bot_temperature,
-                    max_token=postprocess_bot.max_token,
-                    company_bot=postprocess_bot
-                )
-            elif postprocess_bot.provider == LLMProvider.OPENAI:
-                response = handle_openai_model(
-                    system_prompt=system_prompt,
-                    messages=enhanced_messages,
-                    model_name=postprocess_bot.llm_model,
-                    temperature=postprocess_bot.bot_temperature,
-                    max_token=postprocess_bot.max_token,
-                    tools=None,
-                    tool_choice='auto',
-                    is_json_response=False
-                )
-            else:
-                response = None
+                # Build prompt using the postprocess bot's context
+                prompt_builder = PromptBuilder()
 
-            logger.info(f"Complex postprocessing response for {state_machine.name}: {response}")
-            return response
+                system_prompt = prompt_builder.build_system_prompt(postprocess_bot, None)
 
-        except Exception as e:
-            logger.error(f"Error in complex postprocessing: {e}")
-            return None
+                if postprocess_bot.provider == LLMProvider.BEDROCK_CONVERSE:
+                    response = handle_bedrock_model(
+                        system_prompt=system_prompt,
+                        messages=enhanced_messages,
+                        model_name=postprocess_bot.llm_model,
+                        temperature=postprocess_bot.bot_temperature,
+                        max_token=postprocess_bot.max_token,
+                        company_bot=postprocess_bot
+                    )
+                elif postprocess_bot.provider == LLMProvider.OPENAI:
+                    response = handle_openai_model(
+                        system_prompt=system_prompt,
+                        messages=enhanced_messages,
+                        model_name=postprocess_bot.llm_model,
+                        temperature=postprocess_bot.bot_temperature,
+                        max_token=postprocess_bot.max_token,
+                        tools=None,
+                        tool_choice='auto',
+                        is_json_response=False
+                    )
+                else:
+                    response = None
+
+                logger.info(f"Complex postprocessing response for {state_machine.name}: {response}")
+                postprocess_span.update(output=response)
+                return response
+
+            except Exception as e:
+                logger.error(f"Error in complex postprocessing: {e}")
+                postprocess_span.update(output={"error": str(e)}, level="ERROR")
+                return None

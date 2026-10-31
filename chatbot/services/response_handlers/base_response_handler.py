@@ -298,9 +298,15 @@ class BaseResponseHandler(ABC):
                         next_state_machine = CompanyStateMachine.objects.get(
                             company_bot=company_bot, step=next_stage_number
                         )
-                        next_stage_preprocessing_result = self.preprocessing_service.execute_preprocessing(
-                            next_state_machine, kwargs.get('system_prompt', []), **kwargs
-                        )
+                        with langfuse.start_as_current_observation(
+                            as_type="span",
+                            name="preprocessing.execute_preprocessing",
+                            input={"state_machine": next_state_machine.name, "kwargs": kwargs},
+                        ) as preprocessing_span:
+                            next_stage_preprocessing_result = self.preprocessing_service.execute_preprocessing(
+                                next_state_machine, kwargs.get('system_prompt', []), **kwargs
+                            )
+                            preprocessing_span.update(output=next_stage_preprocessing_result)
                         if next_stage_preprocessing_result['action'] == 'skip':
                             kwargs['skip_next_stage_preprocessing'] = True
                         elif next_stage_preprocessing_result['action'] == 'modify_question':
