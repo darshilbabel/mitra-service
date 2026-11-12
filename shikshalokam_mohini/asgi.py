@@ -18,7 +18,6 @@ django_asgi_app = get_asgi_application()
 import django
 django.setup()  # Extra insurance that Django is fully set up
 import chatbot.routing
-import os
 
 from channels.sessions import CookieMiddleware, SessionMiddleware
 from channels.auth import AuthMiddlewareStack
