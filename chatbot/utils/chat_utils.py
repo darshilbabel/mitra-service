@@ -1,9 +1,12 @@
 import json
+import logging
 
 from django.core.cache import cache
 
 from chatbot.constants.cache import CacheKeyEnum
 from chatbot.models import CompanyChat, LLMProvider, Profile
+
+logger = logging.getLogger('django')
 
 
 def format_message_as_per_openai_format(chats, intro=None):
@@ -51,11 +54,24 @@ def format_message_as_per_openai_format(chats, intro=None):
     return messages
 
 
+# capture_input disabled — chats may be CompanyChat model instances (not serializable)
 def format_message_as_per_bedrock_format(chats, intro=None, other_info=None):
+    chats_count = len(chats) if hasattr(chats, '__len__') else None
+    logger.info(
+        f"[format_message_as_per_bedrock_format] start | chats_type={type(chats).__name__} "
+        f"chats_count={chats_count} has_intro={bool(intro)} "
+        f"intro_len={len(intro) if intro else 0} other_info_keys={list(other_info.keys()) if other_info else None}"
+    )
+    ai_user = Profile.objects.values("id").get(id=1)
+    logger.info(f"[format_message_as_per_bedrock_format] ai_user_id={ai_user.get('id')}")
     if intro:
         if other_info:
             user_name = other_info.get('first_name', None)
             user_location = other_info.get('user_location', None)
+            logger.info(
+                f"[format_message_as_per_bedrock_format] other_info | has_user_name={bool(user_name)} "
+                f"has_user_location={bool(user_location)}"
+            )
             if user_name:
                 initial_msg = f"Hello my name is {user_name}."
                 if user_location:
@@ -64,6 +80,7 @@ def format_message_as_per_bedrock_format(chats, intro=None, other_info=None):
                 initial_msg = "Hello"
         else:
             initial_msg = "Hello"
+        logger.info(f"[format_message_as_per_bedrock_format] seeded intro pair | initial_msg={initial_msg!r}")
         messages = [
             {
                 'role': 'user',
@@ -74,8 +91,9 @@ def format_message_as_per_bedrock_format(chats, intro=None, other_info=None):
             }
         ]
     else:
+        logger.info("[format_message_as_per_bedrock_format] no intro, starting with empty messages")
         messages = []
-    for chat in chats:
+    for idx, chat in enumerate(chats):
         chat_receiver = None
         chat_message = None
         chat_translated_message = None
@@ -91,26 +109,51 @@ def format_message_as_per_bedrock_format(chats, intro=None, other_info=None):
             chat_message = chat.get("message")
             chat_translated_message = chat.get("translated_message")
 
+        else:
+            logger.info(
+                f"[format_message_as_per_bedrock_format] chat[{idx}] unsupported type={type(chat).__name__}, "
+                f"treated as assistant with empty fields"
+            )
+
         if chat_receiver == ai_user.get("id"):
             user_message = chat_message
+            used_translation = False
             if chat_translated_message is not None and chat_translated_message != '':
                 user_message = chat_translated_message
+                used_translation = True
+            logger.info(
+                f"[format_message_as_per_bedrock_format] chat[{idx}] role=user type={type(chat).__name__} "
+                f"receiver={chat_receiver} used_translation={used_translation} "
+                f"message_len={len(user_message) if user_message else 0}"
+            )
             messages.append({
                 'role': 'user',
                 'content': [{'text': user_message}]
             })
         else:
+            logger.info(
+                f"[format_message_as_per_bedrock_format] chat[{idx}] role=assistant type={type(chat).__name__} "
+                f"receiver={chat_receiver} message_len={len(chat_message) if chat_message else 0}"
+            )
             messages.append({
                 'role': 'assistant',
                 "content": [{'text': chat_message}]
             })
 
     if not messages or messages[0].get('role') != 'user':
+        logger.info(
+            f"[format_message_as_per_bedrock_format] first message not user "
+            f"(first_role={messages[0].get('role') if messages else None}), prepending 'Hello'"
+        )
         messages.insert(0, {
             'role': 'user',
             'content': [{'text': 'Hello'}]
         })
 
+    logger.info(
+        f"[format_message_as_per_bedrock_format] done | total_messages={len(messages)} "
+        f"roles={[m.get('role') for m in messages]}"
+    )
     return messages
 
 

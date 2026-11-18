@@ -70,13 +70,12 @@ async def evaluate_dataset(output, expected_output, evaluator_bot: CompanyBot):
             "expect_output": expected_output if type(expected_output) is str else json.dumps(expected_output)
         })
 
-        ai_profile_id = await sync_to_async(get_ai_profile)()
+        ai_profile = await sync_to_async(get_ai_profile)()
 
-        evaluator_messages = get_guided_chat(evaluator_bot, [{
-            "receiver": ai_profile_id,
+        evaluator_messages = await sync_to_async(get_guided_chat)(evaluator_bot, [{
+            "receiver": await sync_to_async(getattr)(ai_profile, "id"),
             "message": formatted_evaluator_user_message
         }])
-
 
         evaluator_output = handle_bedrock_model(
             company_bot=evaluator_bot, system_prompt=evaluator_system_prompt,
@@ -94,7 +93,7 @@ async def evaluate_dataset(output, expected_output, evaluator_bot: CompanyBot):
             raise ValueError("Invalid output by the evaluator")
 
         return Evaluation(
-            name=evaluator_bot.get("name", "SampleExperimentName"),
+            name= await sync_to_async(getattr)(evaluator_bot, "name", "SampleExperimentName"),
             value=evaluator_output_score,
             comment=evaluator_output_reason
         )

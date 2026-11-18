@@ -16,7 +16,7 @@ from chatbot.resources.company_resource import ChatSessionResource
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.urls import path
-from django.http import HttpResponseRedirect, HttpResponseNotAllowed
+from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.forms import ModelForm, MultipleChoiceField, CheckboxSelectMultiple
 from inline_actions.admin import InlineActionsMixin, InlineActionsModelAdminMixin
